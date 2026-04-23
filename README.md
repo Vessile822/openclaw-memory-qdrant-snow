@@ -1,84 +1,120 @@
 # openclaw-memory-qdrant (TrueRecall v3.1)
 
-OpenClaw 官方支援的高效能記憶外掛，已全面升級為 **TrueRecall v3.1 智慧記憶精煉系統**。
-本外掛提供與 OpenClaw 原生整合的語義記憶庫 (Semantic Memory)，透過 Qdrant 向量資料庫與本地 LM Studio 服務提供企業級的長期記憶能力。
+> **Semantic Memory System with Auto-Dream & Smart Extraction**
+> 
+> A robust, privacy-first semantic memory plugin built for OpenClaw. This plugin serves as the long-term memory engine for AI agents, featuring layered categorization, automated LLM distillation, and a self-maintaining "Auto-Dream" forgetting mechanism.
+>
+> 專為 OpenClaw 打造的在地化、隱私優先語義記憶外掛。本系統作為 AI 代理的長期記憶引擎，具備分層記憶、LLM 自動精煉，以及自我維護的「自動做夢 (Auto-Dream)」遺忘機制。
 
-## 🚀 v3.1 核心特色 (New Features)
+[繁體中文](README.md) | [English](README_EN.md)
 
-- **🧠 進階 6 大類別與三層結構**：
-  - 根據對話屬性更精確分為 `profile`, `preferences`, `entities`, `events`, `cases`, `patterns`。
-  - 將記憶分層：`abstract` (L0 單行索引)、`overview` (L1 結構化摘要)、`content` (L2 完整內文)。
-- **💭 自動夢境功能 (Auto Dream)**：
-  - 記憶包含引用次數 (`referenceCount`) 與最後調用時間 (`lastReferenced`)。
-  - `dream` 定時/手動演算法自動整理：對太久沒被檢索且重要性分數衰減過低的記憶打上 `archived: true` 的標籤。
-  - `memory_search` 預設只搜索活躍的記憶，提高精準度。
-- **🧠 智慧精煉擷取 (Smart Extraction)**：可選啟用 LLM 精煉，從對話中提取結構化記憶（偏好、決策、事實、實體、反思），低重要性自動丟棄。
-- **🚫 雜訊過濾器 (Noise Filter)**：中英文雙語 7 大類別過濾——自動跳過 "ok"、"收到"、招呼語、否定回應、元問題等無記憶價值的訊息。
-- **🔧 autoCapture Bug 修復**：v2.0 的 `agent_end` 會重複儲存整個對話歷史（一次 186 chunk）。v3.0 修正為只擷取最後一輪對話。
-- **純粹本地端、隱私優先**：依賴本地 LM Studio (OpenAI API 格式) 進行向量化，資料不上雲。
-- **TrueRecall 完美繼承**：Payload Schema 與 TrueRecall Python 腳本 100% 向後相容。
-- **全自動擷取與語義去重**：對話結束後自動抓取重點並進行相似度校驗 (0.95 threshold)。
-- **高效能架構**：外掛原生攔截儲存，不佔用額外背景資源。
+![OpenClaw](https://img.shields.io/badge/OpenClaw_Plugin-2026.3+-blue.svg) ![npm version](https://img.shields.io/badge/npm-v3.1.0-red.svg) ![Vector DB](https://img.shields.io/badge/Vector_DB-Qdrant-purple.svg) ![License](https://img.shields.io/badge/License-MIT-yellow.svg)
 
 ---
 
-## 🏗 架構
+## 🎯 解決的痛點 / Pain Points Solved
 
+1. **Information Overload (資訊超載)**: 傳統記憶系統會盲目記錄所有對話，導致雜訊過多、向量檢索命中率低下。本系統引入 **Noise Filter (雜訊過濾)** 與 **Smart Extraction (智慧精煉)**，只儲存有價值的結構化記憶。
+2. **Context Window Limits (上下文限制)**: 對話紀錄日積月累後塞滿 Prompt。本系統參考了 `CortexReach/memory-lancedb-pro` 的理念，採用安全的 **長文切割策略 (Dynamic Chunking)** 完美適應 8192Tokens 的本機模型，並藉由檢索僅注入最高相關性的 K 筆記錄。
+3. **Memory Stagnation (記憶僵化)**: 舊記憶與無用資訊遲遲不被淘汰。獨創的 **Auto-Dream 機制** 會定時在背景透過「時間衰減」與「引用熱度」評分，自動將低分記憶打入冷宮 (Archive)。
+4. **Privacy Concerns (隱私疑慮)**: 所有文本向量化 (Embedding) 完美相容本機端 LM Studio，確保你的個資、Token 與商業決策 100% 留存在本地端，不上雲。
+
+---
+
+## ⚙️ 核心原則與規格 / Constitution & Specifications
+
+本系統的開發與運行嚴格遵循以下 Spec-Driven Development (SDD) 規格：
+
+### 1. Privacy First (隱私優先)
+* **規格 (Spec-01)**: 所有 Embedding 運算與 Qdrant 儲存皆強制於本地執行 (Local Network)。無對外 API 硬依賴。
+
+### 2. Signal-to-Noise Ratio (高訊噪比)
+* **規格 (Spec-02)**: 強制攔截瑣碎對話。所有對話內容必須通過長度檢測與啟發式過濾，方可進入儲存管線。
+* **規格 (Spec-03)**: (可選) 啟用 LLM Smart Extraction 後，記憶將強制被分類並評估重要性 (Importance)，低重要性者自動捨棄。記憶強制歸類為 6 大精準範圍 (`profile`, `preferences`, `entities`, `events`, `cases`, `patterns`)。
+
+### 3. Self-Maintenance (自我維護)
+* **規格 (Spec-04)**: 自動根據過去 180 天的「參照次數 (Reference Count)」與「時間衰減 (Recency)」為記憶評分，綜合低於 0.3 分且超過 90 天未調用者，自動標示為 `archived`（隱藏），不再干擾日常檢索。
+
+---
+
+## 🏗 系統架構與流程 / Architecture & Flow
+
+為了提供最直觀的理解，本系統的核心架構分為「入口層」與「處理管線」。
+
+```mermaid
+graph TD
+    A[Agent Conversation Ends] -->|Hook: agent_end| B(Interceptor)
+    
+    B --> C{Noise Filter}
+    C -- "Greeting / OK" --> X((Dropped))
+    C -- "Valid Text" --> D[Markdown & Tag Cleaner]
+    
+    D --> E{Smart Extraction Enabled?}
+    
+    E -- YES --> F[LLM Gateway / API]
+    F -- "Distill & Score" --> G[Structured Memory Candidate]
+    F -. "Timeout / Error" .-> H
+    G -- "Importance < Medium" --> X
+    
+    E -- NO --> H[Dynamic Chunker <br> Max 2000 Chars]
+    
+    G --> I[LM Studio Embedder 1024-dim]
+    H --> I
+    
+    I --> J{Qdrant DB Similarity}
+    J -- "> 0.95 (Duplicate)" --> X
+    J -- "< 0.95" --> K[(Qdrant Storage)]
 ```
-agent_end 事件觸發
-    │
-    ▼
-autoCapture hook (v3.0 修復版)
-    ├─► 只取最後一輪訊息（最新的 user + assistant）
-    ├─► isNoise() → 過濾雜訊（純規則，零延遲）
-    ├─► cleanContent() → Markdown 清洗
-    │
-    ├─ [smartExtraction: false] ──────┐
-    │   └─► chunkText() → embed → dedup → store   (原始全文模式)
-    │
-    └─ [smartExtraction: true] ───────┐
-        └─► LLM extract → 結構化記憶候選
-            └─► importance filter → embed → dedup → store (精煉模式)
-```
+
+### 處理管線細節 (Pipeline Details)
+
+當一段對話結束，系統將自動啟動以下處理管道：
+
+1. **攔截與預處理 (Intercept & Preprocess)**
+   * 系統只抓取最後一輪最新對話。
+   * 通過雙語雜訊過濾器（剔除 Greeting, OK, Agent Exceptions, Slash commands 等系統雜訊）。
+   * 洗刷 Markdown 格式殘留並去除 `<relevant-memories>` 注入痕跡，保留最真實的對話紀錄。
+
+2. **處理分歧點 (Processing Fork)**
+   * **智慧精煉模式 (Smart Extraction)**：當啟用且 LLM 正常時，透過 Gateway 端點將對話濃縮為結構化記憶，並給予重要性權重。
+   * **原文模式 (Raw Fallback)**：當 LLM 失效 (Graceful Degradation) 或是未啟用精煉時，啟用文字安全切塊 (Chunking)，單塊最高容量提昇至 2000 字元以對齊 8192Tokens 長文模型。
+
+3. **向量化與寫入 (Embed & Store)**
+   * 將處理好的字串發送至 LM Studio 轉換為高維度向量。
+   * 進入 Qdrant Database 進行相似度掃描，若相似度超過 0.95 閾值則觸發去重 (Dedup) 丟棄。
+   * 正式寫入資料庫，完成記憶固化。
 
 ---
 
-## 💻 系統要求與準備
+## 🆚 架構對比表 / Design Comparison
 
-在啟用本外掛前，請確保：
-
-1. **安裝 LM Studio**：
-   - 啟動 Local Server（預設 `http://127.0.0.1:1234/v1`）。
-   - 載入推薦的 Embedding 模型：`snowflake-arctic-embed-l-v2.0-finetuned-amharic-final` (1024 維度)。
-2. **安裝 Qdrant**：
-   - 可使用 Docker 快速啟動：`docker run -p 6333:6333 qdrant/qdrant`。
-   - 保證伺服器 IP (預設 `http://127.0.0.1:6333`) 是開放的。
-3. **(選用) Smart Extraction**：
-   - 需要一個 Chat Completion 端點（例如 OpenClaw Gateway）。
-   - 預設使用 `http://localhost:18789/v1` + `Doubao-Seed-2.0-Code`。
+| 特性 (Feature) | 傳統 RAG 記憶系統 | 本外掛 (TrueRecall v3.1) | CortexReach (memory-lancedb-pro) 參考 |
+|---------------|-------------------|-------------------------|--------------------------------------|
+| **儲存方式** | 盲目全文儲存 | 雜訊過濾 + LLM 精煉提存 | 全文切割儲存 + 大語言模型再處理 |
+| **長文處理** | 固定 500 tokens | 動態高達 2000字元 + CJK 安全計算 | 支援 8192Tokens 與句子邊界切斷 |
+| **檢索機制** | 單純 Vector Search | Vector Search 配合自動做夢遺忘機制 | 向量加關鍵字的 Hybrid Search (BM25) |
+| **資料庫引擎**| 雲端 Pinecone / 等 | 完全地端 Qdrant (Docker) | 本地端 LanceDB |
 
 ---
 
-## 📦 安裝方式
+## 📦 安裝與設定 / Installation & Setup
 
-### 方法一：專案本地連接 (推薦給開發者)
+### 1. 環境需求 (Prerequisites)
+- **Local LLM**: 開啟 [LM Studio](https://lmstudio.ai/) 的 Local Server (預設 port: 1234)，並載入 Embedding 模型 (推薦: `snowflake-arctic-embed-2.0`，**請將 Context Length 設為 8192**)。
+- **Vector DB**: 啟動 [Qdrant](https://qdrant.tech/) 伺服器：
+  `docker run -p 6333:6333 qdrant/qdrant`
 
-若您已經將此版本庫 clone 下來，您只需進入資料夾並安裝相依套件：
-
+### 2. 安裝外掛 (Install Plugin)
+進入專案資料夾並安裝 Node 相依套件：
 ```bash
 cd <您的外掛路徑>/memory-qdrant
 npm install
 ```
 
-接著，將路徑註冊到 `openclaw.json` (詳見後續設定)。
+### 3. 配置參數 (Configuration)
+在你的 `~/.openclaw/openclaw.json` (或等效的主設定檔) 中，配置記憶體模組的區塊：
 
----
-
-## ⚙️ OpenClaw 設定與啟動
-
-### 基本設定（原文模式 + Noise Filter）
-
-```json5
+```json
 {
   "plugins": {
     "allow": ["memory-qdrant"],
@@ -89,15 +125,15 @@ npm install
       "memory-qdrant": {
         "enabled": true,
         "config": {
-          "qdrantUrl": "http://192.168.0.163:6333",
-          "collectionName": "memories_tr",
+          "qdrantUrl": "http://127.0.0.1:6333",
           "embeddingBaseUrl": "http://127.0.0.1:1234/v1",
-          "embeddingModel": "text-embedding-desu-snowflake-arctic-embed-l-v2.0-finetuned-amharic-final",
-          "defaultUserId": "your-user-id",
-          "defaultAgentId": "main",
+          
           "autoCapture": true,
-          "autoRecall": false,
-          "autoDreamInterval": "24h"
+          "autoDreamInterval": "24h",   // Auto-Dream 自動遺忘機制執行週期
+          
+          "smartExtraction": true,      // 啟用 LLM 智慧精煉
+          "extractionLlmBaseUrl": "http://localhost:18789/v1",
+          "extractionLlmModel": "Doubao-Seed-2.0-Code"
         }
       }
     }
@@ -105,96 +141,20 @@ npm install
 }
 ```
 
-### 進階設定（啟用 LLM 智慧精煉）
-
-```json5
-{
-  "plugins": {
-    "entries": {
-      "memory-qdrant": {
-        "config": {
-          // ... 基本設定同上 ...
-          "smartExtraction": true,                    // 啟用 LLM 精煉
-          "extractionLlmBaseUrl": "http://localhost:18789/v1",  // OpenClaw Gateway
-          "extractionLlmModel": "Doubao-Seed-2.0-Code",         // 火山引擎模型
-          "extractionMaxChars": 8000,                 // 送入 LLM 的最大字元數
-          "extractionMinImportance": "medium"          // 低於 medium 自動丟棄
-        }
-      }
-    }
-  }
-}
-```
-
-設定完成後，重啟 OpenClaw 環境即可生效：
-
+最後，重啟 Gateway 讓外掛載入：
 ```bash
 openclaw gateway restart
 ```
 
 ---
 
-## 🧠 Smart Extraction 記憶分類
+## 🛠 互動與模組 / Capabilities
 
-| 分類 | 說明 | 重要性 |
-|------|------|--------|
-| `profile` | 關於使用者的基本事實（我是誰、我有什麼） | medium |
-| `preferences` | 使用者偏好、習慣、喜歡、討厭、風格 | high |
-| `entities` | 重要的名稱、ID、電話、信箱、帳號 | medium |
-| `events` | 已發生的事、已做出的決定 | medium |
-| `cases` | 過往的 Bug 修復特例、專案背景與痛點 | high |
-| `patterns` | 可重用的思考模式、程式碼慣例 | high |
-| `other` | 有價值但不屬上述分類的資訊 | varies |
+- **純背景被動捕捉 (Passive Capture)**: 主程式隱藏於背景，無需任何人工干預即可自動完備大腦知識庫。
+- **手動/定時夢境 (Auto-Dreaming)**: 可被動等待 `24h` 執行，也可透過 CLI 強制觸發 `openclaw memory-qdrant dream` 來整理老舊記憶。
+- **主動查詢指令 (Active Commands)**: 
+  - Discord/UI 對話窗內支援 `/recall [關鍵字]` 直接提取關聯記憶。
+- **MCP 支援 (MCP Integrations)**: 向其他 Agent 暴露核心工具，支援跨 Agent 呼叫 `memory_store`, `memory_search`, `memory_forget`。
 
 ---
-
-## 🚫 Noise Filter 過濾規則
-
-| 類別 | 範例 |
-|------|------|
-| 極短無意義回覆 | ok、好、收到、嗯、thx |
-| 招呼語 / 樣板 | hello、你好、HEARTBEAT |
-| Agent 否定回應 | I don't remember、未找到相關記憶 |
-| 元問題 | 你還記得嗎、do you remember |
-| 系統信封雜訊 | `<<<EXTERNAL_UNTRUSTED_CONTENT` |
-| Slash 指令 | `/recall`、`/remember` |
-| 診斷產出 | query -> none |
-
----
-
-## 🛠 技術規格
-
-### Payload Schema 一致性
-v3.0 向後相容 TrueRecall Python 的儲存格式。Smart Extraction 模式新增 `category` 和 `importance` 欄位，`source` 標記為 `smart-extraction`。
-
-標準欄位：
-- `user_id`, `agent_id`, `role`, `content`, `full_content_length`
-- `turn`, `timestamp`, `date`, `source`, `curated`
-- `chunk_index`, `total_chunks`
-- (v3.0 新增) `category`, `importance`
-
-### API 工具介面 (MCP 相容)
-
-1. **`memory_store`**: 寫入特定新記憶
-2. **`memory_search`**: 提供高精準語義查詢
-3. **`memory_forget`**: 透過精準比對刪除
-
----
-
-## 💡 常見問題
-
-**Q：v3.0 升級後需要重建 Collection 嗎？**
-A：不用！v3.0 完全向後相容 v2.0 的 Collection，新增的 `category` 和 `importance` 欄位是可選的。
-
-**Q：啟動外掛卻報錯「fetch failed」？**
-A：通常是因為 LM Studio Local Server 尚未開啟。請先啟動 LM Studio Server。
-
-**Q：Smart Extraction 開不開差在哪？**
-A：關閉時（預設），使用原文Chunking +語義去重模式。開啟後，對話會先經過 LLM 精煉，提取結構化記憶，低重要性自動丟棄。
-
-**Q：需要開著 Python 背景監聽腳本嗎？**
-A：**完全不用！** v2.0 起已完全取代 Python 輪詢腳本。
-
-## 授權條款
-
-MIT
+`License: MIT`

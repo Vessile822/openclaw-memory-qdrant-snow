@@ -2,8 +2,8 @@
 name: memory-qdrant
 description: "TrueRecall v3.1: 智慧記憶精煉系統。支援 Qdrant + 本地 LM Studio，結合 Noise Filter 與 Smart Extraction (LLM)，自動萃取、分類並管理對話記憶。"
 version: 3.1.0
-author: zuiho-kai
-homepage: https://github.com/zuiho-kai/openclaw-memory-qdrant
+author: Vessile822
+homepage: https://github.com/Vessile822/openclaw-memory-qdrant-snow
 tags: [memory, semantic-search, qdrant, lm-studio, embeddings, local-ai, vector-db, true-recall]
 metadata:
   openclaw:
@@ -48,7 +48,7 @@ clawhub install memory-qdrant
 ```bash
 # 將版本庫 clone 至 OpenClaw workspace 的 skills 目錄
 cd ~/.openclaw/workspace/skills
-git clone https://github.com/zuiho-kai/openclaw-memory-qdrant.git memory-qdrant
+git clone https://github.com/Vessile822/openclaw-memory-qdrant-snow.git memory-qdrant
 cd memory-qdrant
 npm install
 ```
@@ -109,5 +109,5 @@ openclaw gateway restart
 
 ## 🔗 相關連結
 
-- GitHub: https://github.com/zuiho-kai/openclaw-memory-qdrant
-- 問題回報: https://github.com/zuiho-kai/openclaw-memory-qdrant/issues
+- GitHub: https://github.com/Vessile822/openclaw-memory-qdrant-snow
+- 問題回報: https://github.com/Vessile822/openclaw-memory-qdrant-snow/issues

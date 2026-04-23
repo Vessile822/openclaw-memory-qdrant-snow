@@ -29,7 +29,7 @@ import { smartExtract } from './smart-extractor.js';
 
 const VECTOR_DIM = 1024; // snowflake-arctic-embed-l-v2.0 (1024-dim)
 const DEFAULT_COLLECTION = 'memories_tr';
-const DEFAULT_USER_ID = '297387319848075264';
+const DEFAULT_USER_ID = 'user';
 const DEFAULT_AGENT_ID = 'main';
 const DEFAULT_EMBEDDING_BASE_URL = 'http://127.0.0.1:1234/v1';
 const DEFAULT_EMBEDDING_MODEL =
