@@ -346,6 +346,11 @@ class MemoryDB {
       }
 
       const id = randomUUID();
+      // Initialize scoring metadata
+      if (entry.payload.referenceCount === undefined) entry.payload.referenceCount = 0;
+      if (!entry.payload.lastReferenced) entry.payload.lastReferenced = new Date().toISOString();
+      if (entry.payload.archived === undefined) entry.payload.archived = false;
+
       const record = { id, ...entry.payload, vector: entry.vector, createdAt: Date.now() };
       this.memoryStore.push(record);
       return record;
@@ -363,6 +368,11 @@ class MemoryDB {
     // 修復 BigInt 序列化問題：將其轉為字串 ID 或 Number
     const pointIdRaw = hashBytes.readBigUInt64BE(0) % BigInt(2 ** 63);
     const pointId = pointIdRaw.toString(); // 使用字串 ID 最保險
+
+    // Initialize scoring metadata
+    if (entry.payload.referenceCount === undefined) entry.payload.referenceCount = 0;
+    if (!entry.payload.lastReferenced) entry.payload.lastReferenced = new Date().toISOString();
+    if (entry.payload.archived === undefined) entry.payload.archived = false;
 
     await this.client.upsert(this.collectionName, {
       points: [
@@ -417,7 +427,40 @@ class MemoryDB {
     return { id, ...entry, createdAt: Date.now() };
   }
 
-  async search(vector, limit = 5, minScore = SIMILARITY_THRESHOLDS.LOW) {
+  async updateReferences(ids) {
+    if (this.useMemoryFallback) {
+      const now = new Date().toISOString();
+      for (const id of ids) {
+        const record = this.memoryStore.find((r) => r.id === id);
+        if (record) {
+          record.referenceCount = (record.referenceCount || 0) + 1;
+          record.lastReferenced = now;
+        }
+      }
+      return;
+    }
+
+    if (ids.length === 0) return;
+    await this.ensureCollection();
+    
+    // In Qdrant, we need to retrieve the current payload first to increment referenceCount
+    const points = await this.client.retrieve(this.collectionName, { ids, with_payload: true });
+    if (!points || points.length === 0) return;
+
+    const now = new Date().toISOString();
+    for (const point of points) {
+      const newRefCount = (point.payload?.referenceCount || 0) + 1;
+      await this.client.setPayload(this.collectionName, {
+        payload: {
+          referenceCount: newRefCount,
+          lastReferenced: now
+        },
+        points: [point.id]
+      });
+    }
+  }
+
+  async search(vector, limit = 5, minScore = SIMILARITY_THRESHOLDS.LOW, excludeArchived = true) {
     if (this.useMemoryFallback) {
       const cosineSimilarity = (a, b) => {
         let dot = 0,
@@ -433,16 +476,22 @@ class MemoryDB {
       };
 
       const results = this.memoryStore
+        .filter((r) => !excludeArchived || r.archived !== true)
         .map((record) => ({
           entry: {
             id: record.id,
             text: record.text || record.content,
             content: record.content || record.text,
+            abstract: record.abstract,
+            overview: record.overview,
             category: record.category,
             importance: record.importance,
             createdAt: record.createdAt,
             role: record.role,
             turn: record.turn,
+            referenceCount: record.referenceCount,
+            lastReferenced: record.lastReferenced,
+            archived: record.archived,
             vector: [],
           },
           score: cosineSimilarity(vector, record.vector),
@@ -451,29 +500,54 @@ class MemoryDB {
         .sort((a, b) => b.score - a.score)
         .slice(0, limit);
 
+      if (results.length > 0) {
+        // Fire and forget updating references
+        this.updateReferences(results.map(r => r.entry.id)).catch(() => {});
+      }
+
       return results;
     }
 
     await this.ensureCollection();
 
     try {
+      const filter = excludeArchived ? {
+        must_not: [
+          {
+            key: 'archived',
+            match: { value: true }
+          }
+        ]
+      } : undefined;
+
       const results = await this.client.search(this.collectionName, {
         vector,
         limit,
         score_threshold: minScore,
         with_payload: true,
+        filter,
       });
+
+      if (results.length > 0) {
+        // Fire and forget updating references
+        this.updateReferences(results.map(r => r.id)).catch(() => {});
+      }
 
       return results.map((r) => ({
         entry: {
           id: r.id.toString(), // 確保 ID 轉為字串避免 BigInt 錯誤
           text: r.payload.text || r.payload.content,
           content: r.payload.content || r.payload.text,
+          abstract: r.payload.abstract,
+          overview: r.payload.overview,
           category: r.payload.category,
           importance: r.payload.importance,
           createdAt: r.payload.createdAt,
           role: r.payload.role,
           turn: Number(r.payload.turn || 0), // 確保轉為 Number 避免 BigInt 序列化錯誤
+          referenceCount: r.payload.referenceCount,
+          lastReferenced: r.payload.lastReferenced,
+          archived: r.payload.archived,
           vector: [],
         },
         score: r.score,
@@ -496,6 +570,49 @@ class MemoryDB {
     await this.ensureCollection();
     await this.client.delete(this.collectionName, { points: [id] });
     return true;
+  }
+
+  async archivePoints(ids) {
+    if (this.useMemoryFallback) {
+      for (const id of ids) {
+        const record = this.memoryStore.find((r) => r.id === id);
+        if (record) {
+          record.archived = true;
+        }
+      }
+      return;
+    }
+
+    if (ids.length === 0) return;
+    await this.ensureCollection();
+    
+    await this.client.setPayload(this.collectionName, {
+      payload: { archived: true },
+      points: ids
+    });
+  }
+
+  async scrollAll() {
+    if (this.useMemoryFallback) {
+      return this.memoryStore;
+    }
+    await this.ensureCollection();
+    let offset = null;
+    const allPoints = [];
+    do {
+      const result = await this.client.scroll(this.collectionName, {
+        limit: 100,
+        offset,
+        with_payload: true,
+      });
+      allPoints.push(...result.points);
+      offset = result.next_page_offset;
+    } while (offset !== null && offset !== undefined);
+
+    return allPoints.map((r) => ({
+      id: r.id.toString(),
+      ...r.payload
+    }));
   }
 
   async count() {
@@ -598,6 +715,7 @@ export default function register(api) {
   const embeddingModel = cfg.embeddingModel || DEFAULT_EMBEDDING_MODEL;
   const defaultUserId = cfg.defaultUserId || DEFAULT_USER_ID;
   const defaultAgentId = cfg.defaultAgentId || DEFAULT_AGENT_ID;
+  const autoDreamIntervalMs = cfg.autoDreamIntervalMs || 0; // e.g. 86400000 for daily
 
   // --- Smart Extraction 設定 ---
   const useSmartExtraction = cfg.smartExtraction === true;
@@ -772,6 +890,9 @@ export default function register(api) {
               curated: false,
               chunk_index: chunk.chunk_index,
               total_chunks: chunk.total_chunks,
+              referenceCount: 0,
+              lastReferenced: now.toISOString(),
+              archived: false,
             };
 
             await db.storeTrueRecall({ vector, payload });
@@ -1057,6 +1178,9 @@ export default function register(api) {
             curated: false,
             chunk_index: chunk.chunk_index,
             total_chunks: chunk.total_chunks,
+            referenceCount: 0,
+            lastReferenced: now.toISOString(),
+            archived: false,
           };
           await db.storeTrueRecall({ vector, payload });
           storedCount++;
@@ -1221,6 +1345,8 @@ export default function register(api) {
                   agent_id: defaultAgentId,
                   role: 'assistant',
                   content: memory.content,
+                  abstract: memory.abstract,
+                  overview: memory.overview,
                   full_content_length: memory.content.length,
                   turn: currentTurn,
                   timestamp: now.toISOString(),
@@ -1231,6 +1357,9 @@ export default function register(api) {
                   importance: memory.importance,
                   chunk_index: 0,
                   total_chunks: 1,
+                  referenceCount: 0,
+                  lastReferenced: now.toISOString(),
+                  archived: false,
                 };
 
                 await db.storeTrueRecall({ vector, payload });
@@ -1333,6 +1462,9 @@ export default function register(api) {
                 curated: false,
                 chunk_index: chunk.chunk_index,
                 total_chunks: chunk.total_chunks,
+                referenceCount: 0,
+                lastReferenced: now.toISOString(),
+                archived: false,
               };
 
               await db.storeTrueRecall({ vector, payload });
@@ -1361,6 +1493,63 @@ export default function register(api) {
   }
 
   // ==========================================================================
+  // 自動整理機制 (Auto Dream)
+  // ==========================================================================
+  async function runDream() {
+    api.logger.info('memory-qdrant: 正在執行 Dream 自動整理...');
+    try {
+      const memories = await db.scrollAll();
+      if (!memories || memories.length === 0) {
+        return;
+      }
+
+      const now = new Date();
+      let archivedCount = 0;
+      let activeCount = 0;
+
+      for (const mem of memories) {
+        if (mem.archived) continue;
+
+        const markers = Array.isArray(mem.markers) ? mem.markers : [];
+        if (markers.includes('⚠️ PERMANENT') || markers.includes('📌 PIN')) {
+          activeCount++;
+          continue;
+        }
+
+        let base = 1.0;
+        if (mem.importance === 'high') base = 2.0;
+        else if (mem.importance === 'low') base = 0.5;
+
+        const lastRef = mem.lastReferenced ? new Date(mem.lastReferenced) : new Date();
+        const daysElapsed = (now - lastRef) / (1000 * 60 * 60 * 24);
+        const recency = Math.max(0.1, 1.0 - (daysElapsed / 180));
+
+        const refCount = mem.referenceCount || 0;
+        const refBoost = Math.max(1.0, Math.log2(refCount + 1));
+
+        const raw = base * recency * refBoost;
+        const normalized = raw / 8.0;
+        const score = Math.min(1.0, Math.max(0.0, normalized));
+
+        if (daysElapsed > 90 && score < 0.3) {
+          await db.archivePoints([mem.id]);
+          archivedCount++;
+        } else {
+          activeCount++;
+        }
+      }
+      api.logger.info(`memory-qdrant: Dream 執行完畢。歸檔 ${archivedCount} 筆，活躍 ${activeCount} 筆。`);
+    } catch (err) {
+      api.logger.warn(`memory-qdrant: Dream 執行失敗: ${err.message}`);
+    }
+  }
+
+  if (autoDreamIntervalMs > 0) {
+    setInterval(runDream, autoDreamIntervalMs);
+    api.logger.info(`memory-qdrant: 已啟用定期 Dream 整理，間隔 ${autoDreamIntervalMs} 毫秒`);
+  }
+
+  // ==========================================================================
   // CLI 命令
   // ==========================================================================
 
@@ -1379,6 +1568,13 @@ export default function register(api) {
           console.log(`Collection: ${collectionName}`);
           console.log(`總記憶數: ${count}`);
           console.log(`最大 Turn: ${maxTurn}`);
+        });
+
+      memory
+        .command('dream')
+        .description('自動整理與評分長期記憶 (Scoring & Forgetting)')
+        .action(async () => {
+          await runDream();
         });
 
       memory

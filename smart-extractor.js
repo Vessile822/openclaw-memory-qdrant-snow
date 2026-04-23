@@ -14,12 +14,12 @@
 // ============================================================================
 
 const VALID_CATEGORIES = new Set([
-  'preference',
-  'decision',
-  'fact',
-  'entity',
-  'reflection',
-  'other',
+  'profile',
+  'preferences',
+  'entities',
+  'events',
+  'cases',
+  'patterns',
 ]);
 
 const IMPORTANCE_LEVELS = {
@@ -43,34 +43,54 @@ const DEFAULT_TIMEOUT_MS = 30000;
 function buildExtractionSystemPrompt() {
   return `你是一個記憶提取引擎。你的任務是從對話中提取有長期記憶價值的資訊。
 
-## 規則
-1. 只提取具有持久價值的資訊，忽略一次性的操作細節。
-2. 每條記憶必須是獨立的、自包含的句子。
-3. 用第三人稱描述（例如「使用者偏好用繁體中文」而非「你偏好用繁體中文」）。
-4. 不要提取：招呼語、確認訊息（ok/好/收到）、重複的內容、純程式碼片段。
-5. 低重要性的瑣碎內容（例如：「使用者說了好」）請標記為 "low"。
+## 什麼值得記憶？
+- 個性化資訊：特定於該使用者的資訊，而非通用領域知識
+- 長期有效性：在未來的對話中仍然有用的資訊
+- 具體且清晰：包含具體細節，而非模糊的概括
 
-## 分類定義
-- preference: 使用者偏好、習慣、風格（例如：喜歡用 TailwindCSS）
-- decision: 明確做出的決定（例如：決定使用 Qdrant 而非 Pinecone）
-- fact: 關於使用者或專案的事實（例如：使用者在台灣）
-- entity: 重要的名稱、ID、帳號（例如：專案名叫 OpenClaw）
-- reflection: 學到的教訓、Bug 根因（例如：regex 順序錯誤導致清洗失敗）
-- other: 有價值但不屬上述分類的資訊
+## 什麼「不」值得記憶？
+- 任何人都能知道的通用知識
+- 系統/平台 metadata：message IDs, sender IDs, timestamps, json envelopes 等基礎設施雜訊，絕對不要提取
+- 暫時性資訊：一次性的問題或對話
+- 模糊資訊：「使用者對某個功能有疑問」（沒有具體細節）
+- 工具輸出、錯誤日誌或樣板文字
+- 召回查詢/元問題：「你記得 X 嗎？」、「你知道我喜歡什麼嗎？」——這些是檢索請求，不是要儲存的新資訊
 
-## 重要性定義
-- high: 影響未來決策的關鍵資訊（偏好、架構決定、重要事實）
+## 核心分類邏輯
+- profile - 使用者身分（靜態屬性）。測試：「使用者是...」
+- preferences - 使用者偏好（傾向）。測試：「使用者偏好/喜歡...」
+- entities - 持續存在的名詞。測試：「XXX的狀態是...」
+- events - 發生過的事情。測試：「XXX做了/完成了...」
+- cases - 問題 + 解決方案。測試：包含「問題 -> 解決方案」
+- patterns - 可重複使用的流程。測試：可用於「類似情況」
+
+常見混淆：
+- 「計畫做 X」 -> events (行動，非實體)
+- 「專案 X 狀態：Y」 -> entities (描述實體)
+- 「遇到問題 A，使用方案 B」 -> cases (非 events)
+- 「處理某些問題的通用流程」 -> patterns (非 cases)
+
+## 三層結構 (Three-Level Structure)
+每條記憶必須包含三個層級：
+- abstract (L0): 一行索引。Merge 型別 (preferences/entities/profile/patterns) 格式為 \`[Merge key]: [Description]\`。獨立型別 (events/cases) 為具體描述。
+- overview (L1): 結構化的 Markdown 摘要（帶有特定分類標題）
+- content (L2): 完整的敘述，包含背景與細節。
+
+## 重要性定義 (Importance)
+- high: 影響未來決策的關鍵資訊（偏好、重要事實）
 - medium: 有用但非關鍵的背景資訊
-- low: 瑣碎、一次性、不太可能再被需要的資訊
+- low: 瑣碎、不太可能再被需要的資訊（提取時會自動被過濾）
 
 ## 輸出格式
-回傳一個 JSON 物件（不要包含 markdown 格式）：
+回傳一個 JSON 物件：
 {
   "memories": [
     {
-      "category": "preference",
-      "content": "使用者偏好用繁體中文回應",
-      "importance": "high"
+      "category": "profile|preferences|entities|events|cases|patterns",
+      "abstract": "一行的索引",
+      "overview": "結構化 Markdown 摘要",
+      "content": "完整的敘述",
+      "importance": "high|medium|low"
     }
   ]
 }
@@ -231,7 +251,9 @@ export async function smartExtract(conversationText, options = {}) {
     const category = (raw.category || 'other').toLowerCase();
     if (!VALID_CATEGORIES.has(category)) continue;
 
-    // 驗證 content
+    // 驗證 abstract, overview, content
+    const abstract = (raw.abstract || '').trim();
+    const overview = (raw.overview || '').trim();
     const content = (raw.content || '').trim();
     if (!content || content.length < 5) continue;
 
@@ -242,13 +264,15 @@ export async function smartExtract(conversationText, options = {}) {
     // 低重要性自動丟棄
     if (level < minLevel) {
       log(
-        `smart-extractor: 丟棄低重要性 [${category}/${importance}]: ${content.slice(0, 60)}`
+        `smart-extractor: 丟棄低重要性 [${category}/${importance}]: ${abstract || content.slice(0, 60)}`
       );
       continue;
     }
 
     validMemories.push({
       category,
+      abstract,
+      overview,
       content,
       importance,
     });

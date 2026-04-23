@@ -3,8 +3,15 @@
 OpenClaw 官方支援的高效能記憶外掛，已全面升級為 **TrueRecall v3.0 智慧記憶精煉系統**。
 本外掛提供與 OpenClaw 原生整合的語義記憶庫 (Semantic Memory)，透過 Qdrant 向量資料庫與本地 LM Studio 服務提供企業級的長期記憶能力。
 
-## 🚀 v3.0 核心特色
+## 🚀 v3.1 核心特色 (New Features)
 
+- **🧠 進階 6 大類別與三層結構**：
+  - 根據對話屬性更精確分為 `profile`, `preferences`, `entities`, `events`, `cases`, `patterns`。
+  - 將記憶分層：`abstract` (L0 單行索引)、`overview` (L1 結構化摘要)、`content` (L2 完整內文)。
+- **💭 自動夢境功能 (Auto Dream)**：
+  - 記憶包含引用次數 (`referenceCount`) 與最後調用時間 (`lastReferenced`)。
+  - `dream` 定時/手動演算法自動整理：對太久沒被檢索且重要性分數衰減過低的記憶打上 `archived: true` 的標籤。
+  - `memory_search` 預設只搜索活躍的記憶，提高精準度。
 - **🧠 智慧精煉擷取 (Smart Extraction)**：可選啟用 LLM 精煉，從對話中提取結構化記憶（偏好、決策、事實、實體、反思），低重要性自動丟棄。
 - **🚫 雜訊過濾器 (Noise Filter)**：中英文雙語 7 大類別過濾——自動跳過 "ok"、"收到"、招呼語、否定回應、元問題等無記憶價值的訊息。
 - **🔧 autoCapture Bug 修復**：v2.0 的 `agent_end` 會重複儲存整個對話歷史（一次 186 chunk）。v3.0 修正為只擷取最後一輪對話。
