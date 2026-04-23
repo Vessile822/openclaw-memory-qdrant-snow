@@ -1,6 +1,6 @@
-# openclaw-memory-qdrant (TrueRecall v3.0)
+# openclaw-memory-qdrant (TrueRecall v3.1)
 
-OpenClaw 官方支援的高效能記憶外掛，已全面升級為 **TrueRecall v3.0 智慧記憶精煉系統**。
+OpenClaw 官方支援的高效能記憶外掛，已全面升級為 **TrueRecall v3.1 智慧記憶精煉系統**。
 本外掛提供與 OpenClaw 原生整合的語義記憶庫 (Semantic Memory)，透過 Qdrant 向量資料庫與本地 LM Studio 服務提供企業級的長期記憶能力。
 
 ## 🚀 v3.1 核心特色 (New Features)
@@ -96,7 +96,8 @@ npm install
           "defaultUserId": "your-user-id",
           "defaultAgentId": "main",
           "autoCapture": true,
-          "autoRecall": false
+          "autoRecall": false,
+          "autoDreamInterval": "24h"
         }
       }
     }
@@ -137,11 +138,12 @@ openclaw gateway restart
 
 | 分類 | 說明 | 重要性 |
 |------|------|--------|
-| `preference` | 使用者偏好、習慣、風格 | high |
-| `decision` | 明確做出的決定 | high |
-| `fact` | 關於使用者或專案的事實 | medium |
-| `entity` | 重要的名稱、ID、帳號 | medium |
-| `reflection` | 學到的教訓、Bug 根因 | high |
+| `profile` | 關於使用者的基本事實（我是誰、我有什麼） | medium |
+| `preferences` | 使用者偏好、習慣、喜歡、討厭、風格 | high |
+| `entities` | 重要的名稱、ID、電話、信箱、帳號 | medium |
+| `events` | 已發生的事、已做出的決定 | medium |
+| `cases` | 過往的 Bug 修復特例、專案背景與痛點 | high |
+| `patterns` | 可重用的思考模式、程式碼慣例 | high |
 | `other` | 有價值但不屬上述分類的資訊 | varies |
 
 ---

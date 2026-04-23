@@ -27,7 +27,7 @@ const BOILERPLATE_PATTERNS = [
   /^(你好|哈囉|嗨|早安|午安|晚安|大家好|安安|早啊|嗨嗨|哈嘍)[\s,.!?]*$/,
   /^(fresh session|new session|new chat|start|begin)[\s,.!?]*$/i,
   /^HEARTBEAT$/i,
-  /^\/\w+/,  // slash 指令
+  /^\/(?:recall|remember|forget|search|store)\b/i,  // slash 指令
 ];
 
 // ============================================================================

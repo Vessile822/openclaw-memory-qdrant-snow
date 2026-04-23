@@ -2,8 +2,8 @@
   "id": "memory-qdrant",
   "kind": "memory",
   "name": "Memory (Qdrant + LM Studio)",
-  "version": "3.0.0",
-  "description": "TrueRecall v3.0 — 智慧記憶精煉系統（Noise Filter + Smart Extraction + Qdrant + LM Studio）",
+  "version": "3.1.0",
+  "description": "TrueRecall v3.1 — 智慧記憶精煉系統（Noise Filter + Smart Extraction + Qdrant + LM Studio）",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -44,6 +44,11 @@
         "type": "boolean",
         "default": false
       },
+      "autoDreamInterval": {
+        "type": ["string", "number"],
+        "default": "24h",
+        "description": "Auto Dream 的自動清理間隔時間，支援毫秒數或者字串格式（例如 '24h', '1d', '30m'）"
+      },
       "smartExtraction": {
         "type": "boolean",
         "default": false,
@@ -81,7 +86,7 @@
       "maxMemorySize": {
         "type": "number",
         "minimum": 100,
-        "maximum": 100000,
+        "maximum": 1000000,
         "default": 999999,
         "description": "記憶體模式最大記憶數量。設為 999999 為無限制。"
       }
@@ -126,6 +131,10 @@
     "autoRecall": {
       "label": "自動回憶注入",
       "help": "對話前自動注入相關歷史記憶"
+    },
+    "autoDreamInterval": {
+      "label": "Auto Dream 的排程間隔",
+      "help": "定時清理、評分與拋棄老舊記憶。可輸入 '24h', '1d', '30m' 或是毫秒整數（設定為 0 代表關閉功能）"
     },
     "smartExtraction": {
       "label": "🧠 智慧精煉",

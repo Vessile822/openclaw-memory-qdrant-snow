@@ -1,10 +1,11 @@
 /**
- * OpenClaw Memory (Qdrant) Plugin — TrueRecall v3.0
+ * OpenClaw Memory (Qdrant) Plugin — TrueRecall v3.1
  *
  * 本地語義記憶系統，使用 Qdrant 向量資料庫 + LM Studio 本地 Embedding。
  * 完美移植 realtime_qdrant_watcher.py 的清洗、切割與 Payload 格式。
  *
  * Changelog:
+ *   v3.1.0  修復 Smart Extraction 降級穿透 Bug，並全面統一 Category 類別為 6 項
  *   v3.0.0  智慧記憶精煉 — Noise Filter + Smart Extraction (LLM)
  *           修復 autoCapture 重複儲存整個對話歷史的 Bug
  *           新增雜訊過濾器（中英文雙語 7 大類別）
@@ -28,13 +29,13 @@ import { smartExtract } from './smart-extractor.js';
 
 const VECTOR_DIM = 1024; // snowflake-arctic-embed-l-v2.0 (1024-dim)
 const DEFAULT_COLLECTION = 'memories_tr';
-const DEFAULT_USER_ID = 'rob';
+const DEFAULT_USER_ID = '297387319848075264';
 const DEFAULT_AGENT_ID = 'main';
 const DEFAULT_EMBEDDING_BASE_URL = 'http://127.0.0.1:1234/v1';
 const DEFAULT_EMBEDDING_MODEL =
   'text-embedding-desu-snowflake-arctic-embed-l-v2.0-finetuned-amharic-final';
 
-const MEMORY_CATEGORIES = ['fact', 'preference', 'decision', 'entity', 'other'];
+const MEMORY_CATEGORIES = ['profile', 'preferences', 'entities', 'events', 'cases', 'patterns', 'other'];
 const DEFAULT_MAX_MEMORY_SIZE = 1000;
 
 const SIMILARITY_THRESHOLDS = {
@@ -50,8 +51,9 @@ const DEFAULT_EXTRACTION_LLM_MODEL = 'Doubao-Seed-2.0-Code';
 const DEFAULT_EXTRACTION_MAX_CHARS = 8000;
 const DEFAULT_MIN_IMPORTANCE = 'medium';
 
-// chunking 常數 — 與 Python 腳本一致
-const MAX_CHUNK_CHARS = 6000;
+// chunking 常數 — 參考 memory-lancedb-pro 演算法 (CJK 乘數調校)
+// snowflake 最高可達 8192 tokens。中文約為 1 token = 2~3 char。為了安全不上限爆炸，這裡抓保守的 2000 字元。
+const MAX_CHUNK_CHARS = 2000;
 const CHUNK_OVERLAP = 200;
 
 // ============================================================================
@@ -640,15 +642,15 @@ function sanitizeInput(text) {
 
 function detectCategory(text) {
   const lower = text.toLowerCase();
-  if (/\b(prefer|like|love|hate|want)\b|喜歡/i.test(lower)) return 'preference';
-  if (/\b(decided|will use|budeme)\b|決定/i.test(lower)) return 'decision';
+  if (/\b(prefer|like|love|hate|want)\b|喜歡/i.test(lower)) return 'preferences';
+  if (/\b(decided|will use|budeme)\b|決定/i.test(lower)) return 'events';
   if (
     /\+\d{10,13}\b|^[\w.+-]+@[\w-]+\.[\w.-]{2,}$|\b(is called)\b|叫做/i.test(
       lower
     )
   )
-    return 'entity';
-  if (/\b(is|are|has|have)\b|是|有/i.test(lower)) return 'fact';
+    return 'entities';
+  if (/\b(is|are|has|have)\b|是|有/i.test(lower)) return 'profile';
   return 'other';
 }
 
@@ -705,6 +707,25 @@ function extractLastTurnMessages(messages) {
 // 插件註冊
 // ============================================================================
 
+function parseInterval(intervalStr) {
+  if (typeof intervalStr === 'number') return intervalStr;
+  if (!intervalStr) return 0;
+  
+  const match = intervalStr.toString().match(/^(\d+)(s|m|h|d)$/i);
+  if (!match) return 0;
+  
+  const value = parseInt(match[1], 10);
+  const unit = match[2].toLowerCase();
+  
+  switch(unit) {
+    case 's': return value * 1000;
+    case 'm': return value * 60 * 1000;
+    case 'h': return value * 60 * 60 * 1000;
+    case 'd': return value * 86400000;
+    default: return 0;
+  }
+}
+
 export default function register(api) {
   const cfg = api.pluginConfig;
 
@@ -715,7 +736,8 @@ export default function register(api) {
   const embeddingModel = cfg.embeddingModel || DEFAULT_EMBEDDING_MODEL;
   const defaultUserId = cfg.defaultUserId || DEFAULT_USER_ID;
   const defaultAgentId = cfg.defaultAgentId || DEFAULT_AGENT_ID;
-  const autoDreamIntervalMs = cfg.autoDreamIntervalMs || 0; // e.g. 86400000 for daily
+  const autoDreamIntervalStr = cfg.autoDreamInterval || cfg.autoDreamIntervalMs || 0;
+  const autoDreamIntervalMs = parseInterval(autoDreamIntervalStr);
 
   // --- Smart Extraction 設定 ---
   const useSmartExtraction = cfg.smartExtraction === true;
@@ -777,7 +799,7 @@ export default function register(api) {
     });
 
   api.logger.info(
-    `memory-qdrant: TrueRecall v3.0 已註冊 (LM Studio Embedding → ${collectionName})${useSmartExtraction
+    `memory-qdrant: TrueRecall v3.1 已註冊 (LM Studio Embedding → ${collectionName})${useSmartExtraction
       ? ` [Smart Extraction: ${extractionLlmModel}]`
       : ' [原文模式]'
     }`
@@ -923,7 +945,7 @@ export default function register(api) {
                 skippedDuplicates,
                 turn: currentTurn,
                 totalChunks: chunks.length,
-              }),
+              }, (k, v) => typeof v === 'bigint' ? v.toString() : v),
             },
           ],
         };
@@ -999,7 +1021,7 @@ export default function register(api) {
                   category: r.entry.category,
                   score: r.score,
                 })),
-              }),
+              }, (k, v) => typeof v === 'bigint' ? v.toString() : v),
             },
           ],
         };
@@ -1034,7 +1056,7 @@ export default function register(api) {
                 text: JSON.stringify({
                   success: true,
                   message: `記憶 ${memoryId} 已刪除`,
-                }),
+                }, (k, v) => typeof v === 'bigint' ? v.toString() : v),
               },
             ],
           };
@@ -1076,7 +1098,7 @@ export default function register(api) {
                     message: `已刪除: "${(
                       results[0].entry.content || results[0].entry.text
                     ).slice(0, 60)}"`,
-                  }),
+                  }, (k, v) => typeof v === 'bigint' ? v.toString() : v),
                 },
               ],
             };
@@ -1104,7 +1126,7 @@ export default function register(api) {
                     content: r.entry.content || r.entry.text,
                     score: r.score,
                   })),
-                }),
+                }, (k, v) => typeof v === 'bigint' ? v.toString() : v),
               },
             ],
           };
@@ -1316,6 +1338,7 @@ export default function register(api) {
           if (!conversationText || conversationText.length < 20) return;
 
           // 呼叫 LLM 精煉
+          let extractSuccess = false;
           try {
             const memories = await smartExtract(conversationText, {
               llmBaseUrl: extractionLlmBaseUrl,
@@ -1324,6 +1347,7 @@ export default function register(api) {
               minImportance: extractionMinImportance,
               log: (msg) => api.logger.debug(`memory-qdrant: ${msg}`),
             });
+            extractSuccess = true;
 
             for (const memory of memories) {
               try {
@@ -1374,12 +1398,12 @@ export default function register(api) {
             currentTurn++;
           } catch (err) {
             api.logger.warn(
-              `memory-qdrant: smartExtract 失敗，降級為原文模式: ${err.message}`
+              `memory-qdrant: Extraction failed, fallback to RAW: ${err.message}`
             );
             // 降級到原文模式（繼續往下走，不 return）
           }
 
-          if (totalStored > 0) {
+          if (extractSuccess) {
             api.logger.info(
               `memory-qdrant: 智慧精煉完成 — 儲存 ${totalStored} 條記憶，跳過 ${totalSkipped} 個重複`
             );
@@ -1415,8 +1439,12 @@ export default function register(api) {
 
           if (!rawContent || rawContent.length < 5) continue;
 
-          // 跳過已注入的記憶上下文
-          if (rawContent.includes('<relevant-memories>')) continue;
+          // 移除已注入的記憶上下文，保留使用者的原始對話，而不是整段跳過
+          if (rawContent.includes('<relevant-memories>')) {
+            rawContent = rawContent.replace(/<relevant-memories>[\s\S]*?<\/relevant-memories>/gi, '').trim();
+          }
+
+          if (!rawContent || rawContent.length < 5) continue;
 
           // 🆕 雜訊過濾
           if (isNoise(rawContent)) {
@@ -1454,12 +1482,16 @@ export default function register(api) {
                 agent_id: defaultAgentId,
                 role,
                 content: chunk.text,
+                abstract: '',
+                overview: '',
                 full_content_length: cleaned.length,
                 turn: currentTurn,
                 timestamp: now.toISOString(),
                 date: now.toISOString().slice(0, 10),
                 source: 'true-recall-base',
                 curated: false,
+                category: detectCategory(chunk.text),
+                importance: 'medium',
                 chunk_index: chunk.chunk_index,
                 total_chunks: chunk.total_chunks,
                 referenceCount: 0,
@@ -1546,7 +1578,7 @@ export default function register(api) {
 
   if (autoDreamIntervalMs > 0) {
     setInterval(runDream, autoDreamIntervalMs);
-    api.logger.info(`memory-qdrant: 已啟用定期 Dream 整理，間隔 ${autoDreamIntervalMs} 毫秒`);
+    api.logger.info(`memory-qdrant: 已啟用定期 Dream 整理，間隔 ${autoDreamIntervalStr} (${autoDreamIntervalMs} 毫秒)`);
   }
 
   // ==========================================================================
@@ -1557,7 +1589,7 @@ export default function register(api) {
     ({ program }) => {
       const memory = program
         .command('memory-qdrant')
-        .description('Qdrant 記憶體外掛命令 (TrueRecall v2.0)');
+        .description('Qdrant 記憶體外掛命令 (TrueRecall v3.1)');
 
       memory
         .command('stats')

@@ -1,7 +1,7 @@
 ---
 name: memory-qdrant
-description: "TrueRecall v2.0: Qdrant-backed semantic memory with local LM Studio embeddings. Auto-capture, deduplication, smart chunking. Replaces the Python watcher script entirely."
-version: 2.0.0
+description: "TrueRecall v3.1: 智慧記憶精煉系統。支援 Qdrant + 本地 LM Studio，結合 Noise Filter 與 Smart Extraction (LLM)，自動萃取、分類並管理對話記憶。"
+version: 3.1.0
 author: zuiho-kai
 homepage: https://github.com/zuiho-kai/openclaw-memory-qdrant
 tags: [memory, semantic-search, qdrant, lm-studio, embeddings, local-ai, vector-db, true-recall]
@@ -11,18 +11,19 @@ metadata:
       bins: [node, npm]
 ---
 
-# memory-qdrant (TrueRecall v2.0)
+# memory-qdrant (TrueRecall v3.1)
 
-**推薦使用時機**：當你希望 OpenClaw 能跨對話記住使用者的習慣、決策與重要數據，又不希望資料流到雲端或佔用額外資源時。
+**推薦使用時機**：當你希望 OpenClaw 能跨對話記住使用者的習慣、決策與重要數據，並且期望有智慧篩選機制去除招呼語等雜訊時。
 
-這是 OpenClaw 高效能語義記憶外掛，已升級為 **TrueRecall v2.0**。捨棄舊版 `Transformers.js` 與耗能的 Python 輪詢腳本，改用本地 **LM Studio (OpenAI 格式)** 進行 1024-dim 向量 Embedding，並原生整合 OpenClaw lifecycle hooks。
+這是 OpenClaw 高效能語義記憶外掛，已升級為 **TrueRecall v3.1**。結合本地 **LM Studio (OpenAI 格式)** 進行 1024-dim 向量 Embedding，並具備智慧雜訊過濾與 LLM 精煉能力。
 
 ## 🌟 亮點功能
 
-- **本地 Embedding**：串接本地 LM Studio（預設 `http://127.0.0.1:1234/v1`），零雲端依賴
-- **智慧清理與分塊**：將 Python 端的 `clean_content` / `chunk_text` 邏輯原生移植至 Plugin，自動過濾 Markdown、`[thinking]` 標籤、時間戳記
-- **語義去重**：AutoCapture 後對每個 chunk 做相似度比對（cosine ≥ 0.95 則跳過），保持向量庫乾淨
-- **Turn ID 連續性**：寫入前自動查詢 Qdrant 最大 turn 值，跨會話保持連續計數，格式與舊版 Python 腳本 100% 相容
+- **🧠 智慧精煉擷取 (Smart Extraction)**：可選啟用 LLM 精煉，從對話中提取結構化記憶，低重要性自動丟棄。支援 6 大分類與 L0~L2 三層記憶結構。
+- **🚫 雜訊過濾器 (Noise Filter)**：中英文雙語 7 大類別過濾——自動跳過 "ok"、"收到"、招呼語、否定回應、元問題等無記憶價值的訊息，零延遲。
+- **💭 自動夢境功能 (Auto Dream)**：定時清理過期記憶，自動打上 `archived` 標籤，保持記憶庫活躍度。
+- **本地 Embedding**：串接本地 LM Studio，零雲端依賴，保障隱私。
+- **語義去重**：AutoCapture 後對每個 chunk 做相似度比對（cosine ≥ 0.95 則跳過），保持向量庫乾淨。
 
 ## 📦 前置需求
 
