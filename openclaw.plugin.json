@@ -2,8 +2,8 @@
   "id": "memory-qdrant",
   "kind": "memory",
   "name": "Memory (Qdrant + LM Studio)",
-  "version": "2.0.0",
-  "description": "TrueRecall v2.0 — 本地語義記憶系統（Qdrant + LM Studio Embedding）",
+  "version": "3.0.0",
+  "description": "TrueRecall v3.0 — 智慧記憶精煉系統（Noise Filter + Smart Extraction + Qdrant + LM Studio）",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -43,6 +43,34 @@
       "autoRecall": {
         "type": "boolean",
         "default": false
+      },
+      "smartExtraction": {
+        "type": "boolean",
+        "default": false,
+        "description": "啟用 LLM 智慧精煉擷取（需要 Chat Completion 端點）"
+      },
+      "extractionLlmBaseUrl": {
+        "type": "string",
+        "default": "http://localhost:18789/v1",
+        "description": "精煉用 LLM 的 API 端點（預設使用 OpenClaw Gateway）"
+      },
+      "extractionLlmModel": {
+        "type": "string",
+        "default": "Doubao-Seed-2.0-Code",
+        "description": "精煉用 LLM 模型名稱"
+      },
+      "extractionMaxChars": {
+        "type": "number",
+        "minimum": 1000,
+        "maximum": 32000,
+        "default": 8000,
+        "description": "送入 LLM 精煉的最大對話文字長度"
+      },
+      "extractionMinImportance": {
+        "type": "string",
+        "enum": ["high", "medium", "low"],
+        "default": "medium",
+        "description": "最低重要性等級（低於此等級的記憶自動丟棄）"
       },
       "captureMaxChars": {
         "type": "number",
@@ -92,12 +120,38 @@
       "advanced": true
     },
     "autoCapture": {
-      "label": "全量自動擷取",
-      "help": "對話結束後自動儲存所有 user/assistant 訊息（含去重）"
+      "label": "自動擷取",
+      "help": "對話結束後自動擷取並儲存記憶（搭配 Noise Filter + 語義去重）"
     },
     "autoRecall": {
       "label": "自動回憶注入",
       "help": "對話前自動注入相關歷史記憶"
+    },
+    "smartExtraction": {
+      "label": "🧠 智慧精煉",
+      "help": "啟用 LLM 智慧精煉擷取。開啟後對話記憶會先經過 AI 提煉，只保留重要資訊。需要 Chat Completion 端點。"
+    },
+    "extractionLlmBaseUrl": {
+      "label": "精煉 LLM API 位址",
+      "placeholder": "http://localhost:18789/v1",
+      "help": "用於記憶精煉的 LLM Chat Completion API 端點",
+      "advanced": true
+    },
+    "extractionLlmModel": {
+      "label": "精煉 LLM 模型",
+      "placeholder": "Doubao-Seed-2.0-Code",
+      "help": "用於記憶精煉的 LLM 模型名稱",
+      "advanced": true
+    },
+    "extractionMaxChars": {
+      "label": "精煉最大字元數",
+      "help": "送入 LLM 精煉的最大對話文字長度",
+      "advanced": true
+    },
+    "extractionMinImportance": {
+      "label": "最低重要性",
+      "help": "低於此等級的記憶會被自動丟棄（high/medium/low）",
+      "advanced": true
     },
     "captureMaxChars": {
       "label": "Chunk 最大字元數",

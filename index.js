@@ -1,10 +1,15 @@
 /**
- * OpenClaw Memory (Qdrant) Plugin — TrueRecall v2.0
+ * OpenClaw Memory (Qdrant) Plugin — TrueRecall v3.0
  *
  * 本地語義記憶系統，使用 Qdrant 向量資料庫 + LM Studio 本地 Embedding。
  * 完美移植 realtime_qdrant_watcher.py 的清洗、切割與 Payload 格式。
  *
  * Changelog:
+ *   v3.0.0  智慧記憶精煉 — Noise Filter + Smart Extraction (LLM)
+ *           修復 autoCapture 重複儲存整個對話歷史的 Bug
+ *           新增雜訊過濾器（中英文雙語 7 大類別）
+ *           新增 LLM 精煉擷取（透過 OpenClaw Gateway）
+ *           低重要性記憶自動丟棄
  *   v2.0.0  全面重寫 — Embedding 改為 LM Studio (OpenAI 相容)
  *           移植 Python clean_content / chunk_text
  *           Payload Schema 與 TrueRecall base 100% 一致
@@ -14,6 +19,8 @@
 import { QdrantClient } from '@qdrant/js-client-rest';
 import { randomUUID } from 'crypto';
 import { createHash } from 'crypto';
+import { isNoise } from './noise-filter.js';
+import { smartExtract } from './smart-extractor.js';
 
 // ============================================================================
 // 常數設定
@@ -36,6 +43,12 @@ const SIMILARITY_THRESHOLDS = {
   MEDIUM: 0.5,     // 中等相關性
   LOW: 0.3,        // 低相關性（預設）
 };
+
+// Smart Extraction 預設值
+const DEFAULT_EXTRACTION_LLM_BASE_URL = 'http://localhost:18789/v1';
+const DEFAULT_EXTRACTION_LLM_MODEL = 'Doubao-Seed-2.0-Code';
+const DEFAULT_EXTRACTION_MAX_CHARS = 8000;
+const DEFAULT_MIN_IMPORTANCE = 'medium';
 
 // chunking 常數 — 與 Python 腳本一致
 const MAX_CHUNK_CHARS = 6000;
@@ -538,6 +551,39 @@ function formatRelevantMemoriesContext(memories) {
   )}\n</relevant-memories>`;
 }
 
+/**
+ * 從 event.messages 中提取最後一輪對話（最新的 user + assistant）。
+ * 修復原本遍歷整個 Context Window 導致重複儲存的 Bug。
+ *
+ * @param {Array} messages event.messages 陣列
+ * @returns {Array} 最後一輪的 user + assistant 訊息（最多 2 條）
+ */
+function extractLastTurnMessages(messages) {
+  if (!messages || messages.length === 0) return [];
+
+  const result = [];
+  // 從尾端反向搜尋最後一個 assistant 和最後一個 user
+  let foundAssistant = false;
+  let foundUser = false;
+
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (!msg || typeof msg !== 'object') continue;
+
+    if (msg.role === 'assistant' && !foundAssistant) {
+      result.unshift(msg);
+      foundAssistant = true;
+    } else if (msg.role === 'user' && !foundUser) {
+      result.unshift(msg);
+      foundUser = true;
+    }
+
+    if (foundAssistant && foundUser) break;
+  }
+
+  return result;
+}
+
 // ============================================================================
 // 插件註冊
 // ============================================================================
@@ -552,6 +598,17 @@ export default function register(api) {
   const embeddingModel = cfg.embeddingModel || DEFAULT_EMBEDDING_MODEL;
   const defaultUserId = cfg.defaultUserId || DEFAULT_USER_ID;
   const defaultAgentId = cfg.defaultAgentId || DEFAULT_AGENT_ID;
+
+  // --- Smart Extraction 設定 ---
+  const useSmartExtraction = cfg.smartExtraction === true;
+  const extractionLlmBaseUrl =
+    cfg.extractionLlmBaseUrl || DEFAULT_EXTRACTION_LLM_BASE_URL;
+  const extractionLlmModel =
+    cfg.extractionLlmModel || DEFAULT_EXTRACTION_LLM_MODEL;
+  const extractionMaxChars =
+    cfg.extractionMaxChars || DEFAULT_EXTRACTION_MAX_CHARS;
+  const extractionMinImportance =
+    cfg.extractionMinImportance || DEFAULT_MIN_IMPORTANCE;
 
   const db = new MemoryDB(cfg.qdrantUrl, collectionName, maxSize);
   const embeddings = new LMStudioEmbeddings(embeddingBaseUrl, embeddingModel);
@@ -602,7 +659,10 @@ export default function register(api) {
     });
 
   api.logger.info(
-    `memory-qdrant: TrueRecall v2.0 已註冊 (LM Studio Embedding → ${collectionName})`
+    `memory-qdrant: TrueRecall v3.0 已註冊 (LM Studio Embedding → ${collectionName})${useSmartExtraction
+      ? ` [Smart Extraction: ${extractionLlmModel}]`
+      : ' [原文模式]'
+    }`
   );
 
   // ==========================================================================
@@ -725,11 +785,10 @@ export default function register(api) {
 
         const msg =
           storedCount > 0
-            ? `已儲存 ${storedCount} 個 chunk (turn ${currentTurn})${
-                skippedDuplicates > 0
-                  ? `，跳過 ${skippedDuplicates} 個重複`
-                  : ''
-              }`
+            ? `已儲存 ${storedCount} 個 chunk (turn ${currentTurn})${skippedDuplicates > 0
+              ? `，跳過 ${skippedDuplicates} 個重複`
+              : ''
+            }`
             : `全部 ${skippedDuplicates} 個 chunk 重複，未寫入`;
 
         return {
@@ -1099,8 +1158,110 @@ export default function register(api) {
         const now = new Date();
         let totalStored = 0;
         let totalSkipped = 0;
+        let totalNoiseFiltered = 0;
 
-        for (const msg of event.messages) {
+        // ============================================================
+        // 🔧 Bug Fix: 只取最後一輪訊息（不再遍歷整個 Context Window）
+        // ============================================================
+        const lastTurnMessages = extractLastTurnMessages(event.messages);
+
+        if (lastTurnMessages.length === 0) return;
+
+        // ============================================================
+        // Smart Extraction 分支
+        // ============================================================
+        if (useSmartExtraction) {
+          // 組合最後一輪的對話文字
+          let conversationText = '';
+          for (const msg of lastTurnMessages) {
+            let text = '';
+            if (typeof msg.content === 'string') {
+              text = msg.content;
+            } else if (Array.isArray(msg.content)) {
+              for (const block of msg.content) {
+                if (block && typeof block === 'object' && block.type === 'text' && block.text) {
+                  text += block.text;
+                }
+              }
+            }
+            if (text) {
+              conversationText += `[${msg.role}]: ${text}\n\n`;
+            }
+          }
+
+          if (!conversationText || conversationText.length < 20) return;
+
+          // 呼叫 LLM 精煉
+          try {
+            const memories = await smartExtract(conversationText, {
+              llmBaseUrl: extractionLlmBaseUrl,
+              llmModel: extractionLlmModel,
+              maxChars: extractionMaxChars,
+              minImportance: extractionMinImportance,
+              log: (msg) => api.logger.debug(`memory-qdrant: ${msg}`),
+            });
+
+            for (const memory of memories) {
+              try {
+                const vector = await embeddings.embed(memory.content);
+
+                // 語義去重
+                const existing = await db.search(
+                  vector,
+                  1,
+                  SIMILARITY_THRESHOLDS.DUPLICATE
+                );
+                if (existing.length > 0) {
+                  totalSkipped++;
+                  continue;
+                }
+
+                const payload = {
+                  user_id: defaultUserId,
+                  agent_id: defaultAgentId,
+                  role: 'assistant',
+                  content: memory.content,
+                  full_content_length: memory.content.length,
+                  turn: currentTurn,
+                  timestamp: now.toISOString(),
+                  date: now.toISOString().slice(0, 10),
+                  source: 'smart-extraction',
+                  curated: false,
+                  category: memory.category,
+                  importance: memory.importance,
+                  chunk_index: 0,
+                  total_chunks: 1,
+                };
+
+                await db.storeTrueRecall({ vector, payload });
+                totalStored++;
+              } catch (err) {
+                api.logger.warn(
+                  `memory-qdrant: smartExtract 寫入失敗: ${err.message}`
+                );
+              }
+            }
+
+            currentTurn++;
+          } catch (err) {
+            api.logger.warn(
+              `memory-qdrant: smartExtract 失敗，降級為原文模式: ${err.message}`
+            );
+            // 降級到原文模式（繼續往下走，不 return）
+          }
+
+          if (totalStored > 0) {
+            api.logger.info(
+              `memory-qdrant: 智慧精煉完成 — 儲存 ${totalStored} 條記憶，跳過 ${totalSkipped} 個重複`
+            );
+            return; // 精煉成功，不需要再走原文模式
+          }
+        }
+
+        // ============================================================
+        // 原文模式（smartExtraction 關閉 或 精煉失敗時的降級路徑）
+        // ============================================================
+        for (const msg of lastTurnMessages) {
           if (!msg || typeof msg !== 'object') continue;
 
           const role = msg.role;
@@ -1127,6 +1288,15 @@ export default function register(api) {
 
           // 跳過已注入的記憶上下文
           if (rawContent.includes('<relevant-memories>')) continue;
+
+          // 🆕 雜訊過濾
+          if (isNoise(rawContent)) {
+            totalNoiseFiltered++;
+            api.logger.debug(
+              `memory-qdrant: 跳過雜訊: ${rawContent.slice(0, 50)}`
+            );
+            continue;
+          }
 
           // 清洗
           const cleaned = cleanContent(rawContent);
@@ -1177,9 +1347,9 @@ export default function register(api) {
           currentTurn++;
         }
 
-        if (totalStored > 0) {
+        if (totalStored > 0 || totalNoiseFiltered > 0) {
           api.logger.info(
-            `memory-qdrant: 全量擷取完成 — 儲存 ${totalStored} 個 chunk，跳過 ${totalSkipped} 個重複`
+            `memory-qdrant: 擷取完成 — 儲存 ${totalStored} 個 chunk，跳過 ${totalSkipped} 個重複，過濾 ${totalNoiseFiltered} 個雜訊`
           );
         }
       } catch (err) {
@@ -1252,4 +1422,4 @@ export default function register(api) {
 }
 
 // 匯出內部函式供測試使用
-export { cleanContent, chunkText, sanitizeInput, detectCategory, escapeMemoryForPrompt };
+export { cleanContent, chunkText, sanitizeInput, detectCategory, escapeMemoryForPrompt, extractLastTurnMessages };
