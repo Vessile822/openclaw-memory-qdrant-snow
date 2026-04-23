@@ -1,9 +1,9 @@
 {
   "id": "memory-qdrant",
   "kind": "memory",
-  "name": "Memory (Qdrant)",
-  "version": "1.0.10",
-  "description": "本地語義記憶系統（Qdrant + Transformers.js，完全本地執行）",
+  "name": "Memory (Qdrant + LM Studio)",
+  "version": "2.0.0",
+  "description": "TrueRecall v2.0 — 本地語義記憶系統（Qdrant + LM Studio Embedding）",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -14,59 +14,99 @@
       },
       "collectionName": {
         "type": "string",
-        "default": "openclaw_memories"
+        "default": "memories_tr"
+      },
+      "embeddingBaseUrl": {
+        "type": "string",
+        "default": "http://127.0.0.1:1234/v1",
+        "description": "LM Studio API 基底網址"
+      },
+      "embeddingModel": {
+        "type": "string",
+        "default": "text-embedding-desu-snowflake-arctic-embed-l-v2.0-finetuned-amharic-final",
+        "description": "Embedding 模型名稱"
+      },
+      "defaultUserId": {
+        "type": "string",
+        "default": "user",
+        "description": "預設使用者 ID（寫入 Qdrant payload，建議設為你的名稱或帳號）"
+      },
+      "defaultAgentId": {
+        "type": "string",
+        "default": "main",
+        "description": "預設 Agent ID（寫入 Qdrant payload）"
       },
       "autoCapture": {
         "type": "boolean",
-        "default": false
+        "default": true
       },
       "autoRecall": {
         "type": "boolean",
-        "default": true
+        "default": false
       },
       "captureMaxChars": {
         "type": "number",
         "minimum": 100,
         "maximum": 10000,
-        "default": 500
+        "default": 6000
       },
       "maxMemorySize": {
         "type": "number",
         "minimum": 100,
-        "maximum": 1000000,
-        "default": 1000,
-        "description": "Maximum number of memories in in-memory mode. Set to 999999 for unlimited (oldest memories are auto-deleted when limit is reached, except when set to 999999)"
+        "maximum": 100000,
+        "default": 999999,
+        "description": "記憶體模式最大記憶數量。設為 999999 為無限制。"
       }
     }
   },
   "uiHints": {
     "qdrantUrl": {
       "label": "Qdrant URL",
-      "placeholder": "Leave empty for in-memory mode (zero config)",
-      "advanced": true,
-      "help": "External Qdrant server URL. Leave empty to use in-memory storage."
+      "placeholder": "http://192.168.0.163:6333",
+      "help": "Qdrant 向量資料庫位址。留空使用記憶體模式。"
     },
     "collectionName": {
-      "label": "Collection Name",
-      "placeholder": "openclaw_memories",
+      "label": "Collection 名稱",
+      "placeholder": "memories_tr",
+      "advanced": true
+    },
+    "embeddingBaseUrl": {
+      "label": "LM Studio API 位址",
+      "placeholder": "http://127.0.0.1:1234/v1",
+      "help": "本地 LM Studio Embedding 服務的 API 基底網址"
+    },
+    "embeddingModel": {
+      "label": "Embedding 模型",
+      "placeholder": "text-embedding-desu-snowflake-arctic-embed-l-v2.0-finetuned-amharic-final",
+      "advanced": true,
+      "help": "LM Studio 中載入的 Embedding 模型名稱"
+    },
+    "defaultUserId": {
+      "label": "預設使用者 ID",
+      "placeholder": "your-user-id",
+      "advanced": true
+    },
+    "defaultAgentId": {
+      "label": "預設 Agent ID",
+      "placeholder": "main",
       "advanced": true
     },
     "autoCapture": {
-      "label": "Auto Capture",
-      "help": "Auto-save important info after conversations. Note: trigger patterns match emails and phone numbers, so enabling this may capture PII. Disabled by default."
+      "label": "全量自動擷取",
+      "help": "對話結束後自動儲存所有 user/assistant 訊息（含去重）"
     },
     "autoRecall": {
-      "label": "Auto Recall",
-      "help": "Auto-inject relevant memories before conversations"
+      "label": "自動回憶注入",
+      "help": "對話前自動注入相關歷史記憶"
     },
     "captureMaxChars": {
-      "label": "Capture Max Length",
-      "help": "Maximum characters per captured memory",
+      "label": "Chunk 最大字元數",
+      "help": "每個 Chunk 的最大字元數（預設 6000）",
       "advanced": true
     },
     "maxMemorySize": {
-      "label": "Max Memory Size (In-Memory Mode)",
-      "help": "Maximum number of memories stored in in-memory mode. When limit is reached, oldest memories are automatically deleted (LRU eviction). Set to 999999 for unlimited storage. Only applies to in-memory mode, not external Qdrant.",
+      "label": "最大記憶數量 (記憶體模式)",
+      "help": "記憶體模式下的最大記憶數量。設為 999999 為無限制。",
       "advanced": true
     }
   }

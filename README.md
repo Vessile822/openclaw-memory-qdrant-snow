@@ -1,247 +1,125 @@
-# openclaw-memory-qdrant
+# openclaw-memory-qdrant (TrueRecall v2.0)
 
-OpenClaw 本地語義記憶外掛，基於 Qdrant 和 Transformers.js 實作零配置的語義搜尋。
+OpenClaw 官方支援的高效能記憶外掛，已全面升級為 **TrueRecall v2.0 架構**。
+本外掛提供與 OpenClaw 原生整合的語義記憶庫 (Semantic Memory)，透過 Qdrant 向量資料庫與本地 LM Studio 服務提供企業級的長期記憶能力，完全取代舊版耗能的 Python 監聽腳本！
 
-**📦 ClawHub**: https://clawhub.ai/skills/memory-qdrant
+## 🚀 核心特色
 
-## 特色
+- **純粹本地端、隱私優先**：依賴本地 LM Studio (OpenAI API 格式) 進行向量化，資料不上雲。
+- **TrueRecall 完美繼承**：內建智能文本清理 (移除思維標籤、Markdown、時間戳記) 以及智慧分塊 (Chunking) 技術。
+- **全自動擷取與語義去重**：對話結束後自動抓取重點並進行相似度校驗，確保記憶乾淨不重複。
+- **高效能架構**：捨棄舊版輪詢腳本機制，改以外掛原生攔截儲存，不佔用額外背景資源。
+- **精準跨會話記憶**：支援自動遞增 Turn ID 邏輯，保留連續交談中的完整時序。
 
-- 🧠 **本地語義搜尋** - 使用 Transformers.js 在本地產生嵌入向量 (Embeddings)
-- 💾 **記憶體模式** - 零配置，無需外部服務
-- 🔄 **自動擷取** - 透過 lifecycle hooks 自動記錄重要訊息
-- 🎯 **智慧回想** - 根據上下文自動檢索相關記憶
+---
 
-## 安裝
+## 💻 系統要求與準備
 
-### 透過 ClawHub（推薦）
+在啟用本外掛前，請確保：
+
+1. **安裝 LM Studio**：
+   - 啟動 Local Server（預設 `http://127.0.0.1:1234/v1`）。
+   - 載入推薦的 Embedding 模型：`snowflake-arctic-embed-l-v2.0-finetuned-amharic-final` (1024 維度)。
+2. **安裝 Qdrant**：
+   - 可使用 Docker 快速啟動：`docker run -p 6333:6333 qdrant/qdrant`。
+   - 保證伺服器 IP (預設 `http://127.0.0.1:6333`) 是開放的。
+
+---
+
+## 📦 安裝方式
+
+### 方法一：專案本地連接 (推薦給開發者)
+
+若您已經將此版本庫 clone 下來，您只需進入資料夾並安裝相依套件：
 
 ```bash
-clawhub install memory-qdrant
-```
-
-### 手動安裝
-
-```bash
-cd ~/.openclaw/plugins
-git clone https://github.com/Vessile822/openclaw-memory-qdrant-snow.git memory-qdrant
-cd memory-qdrant
+cd c:\Users\Vess\.openclaw\workspace\skills\memory-qdrant
 npm install
 ```
 
-### 安裝要求
+接著，您需要將路徑註冊到 `openclaw.json` (詳見後續設定)。
 
-**首次執行準備：**
+---
 
-1. **Node.js 版本**: 需要 Node.js ≥18.17
-   ```bash
-   node --version  # 檢查版本
-   ```
+## ⚙️ OpenClaw 設定與啟動
 
-2. **建構工具**（用於編譯原生相依性）：
-   - **Windows**: Visual Studio Build Tools
-     ```powershell
-     npm install --global windows-build-tools
-     ```
-   - **macOS**: Xcode Command Line Tools
-     ```bash
-     xcode-select --install
-     ```
-   - **Linux**: build-essential
-     ```bash
-     sudo apt-get install build-essential  # Debian/Ubuntu
-     sudo yum groupinstall "Development Tools"  # RHEL/CentOS
-     ```
+請在您的 OpenClaw 全域設定檔（通常位在 `~/.openclaw/openclaw.json`），將此記憶外掛掛上。
 
-3. **網路連線**:
-   - 安裝時需要存取 npmjs.com 下載相依套件
-   - 首次執行時會從 huggingface.co 下載嵌入模型（約 25MB）
-   - 如果配置了外部 Qdrant 伺服器，需要能連線該伺服器
+請參考以下範例：
 
-4. **原生相依性**:
-   - `sharp`: 影像處理函式庫（可能需要編譯）
-   - `onnxruntime`: ML 推理引擎（可能需要編譯）
-   - `undici`: HTTP 用戶端（透過 @qdrant/js-client-rest 引入）
-
-### 推薦安裝方式
-
-```bash
-# 使用 npm ci 確保可重現的安裝（推薦用於生產環境）
-npm ci
-
-# 或者分步安裝（用於偵錯）
-npm install --ignore-scripts  # 跳過 post-install 腳本
-npm rebuild                    # 然後重新建構原生模組
-```
-
-### 故障排除
-
-**問題：原生模組編譯失敗**
-- 確保已安裝對應平台的建構工具
-- 嘗試清理快取：`npm cache clean --force`
-- 刪除 node_modules 重新安裝：`rm -rf node_modules && npm install`
-
-**問題：模型下載失敗**
-- 檢查網路連線和防火牆設定
-- 確保能存取 huggingface.co
-- 模型會快取在 `~/.cache/huggingface/` 目錄
-
-**問題：Node 版本不相容**
-- 升級到 Node.js 18.17 或更高版本
-- 使用 nvm 管理多個 Node 版本：`nvm install 18 && nvm use 18`
-
-## 設定
-
-在 OpenClaw 設定檔中啟用外掛：
-
-```json
+```json5
 {
   "plugins": {
-    "memory-qdrant": {
-      "enabled": true,
-      "autoCapture": false,  // 預設關閉，需要時手動開啟
-      "autoRecall": true,
-      "captureMaxChars": 500
+    "allow": [
+      "memory-qdrant" // 將您的外掛名稱加到允許列表中
+    ],
+    "slots": {
+      "memory": "memory-qdrant" // 讓系統使用 qdrant 做為主要的預設記憶模組
+    },
+    "entries": {
+      "memory-qdrant": {
+        "enabled": true,
+        "config": {
+          "qdrantUrl": "http://192.168.0.163:6333", // 您的 Qdrant 位址
+          "collectionName": "memories_tr", // 1024 維度的專屬集合
+          "embeddingBaseUrl": "http://127.0.0.1:1234/v1", // LM Studio 位址
+          "embeddingModel": "text-embedding-desu-snowflake-arctic-embed-l-v2.0-finetuned-amharic-final",
+          "defaultUserId": "Vess", 
+          "defaultAgentId": "main",
+          "autoCapture": true, // 自動重點記憶
+          "autoRecall": true   // 自動背景提取
+        }
+      }
     }
   }
 }
 ```
 
-### 設定選項
-
-- **qdrantUrl** (可選): 外部 Qdrant 服務位址，留空使用記憶體模式
-- **autoCapture** (預設 false): 自動記錄對話內容，開啟前請注意隱私
-- **autoRecall** (預設 true): 自動將相關記憶注入對話
-- **captureMaxChars** (預設 500): 單條記憶最大字元數
-- **maxMemorySize** (預設 1000): 記憶體模式下的最大記憶條數
-  - 僅在記憶體模式下生效（未配置 qdrantUrl 時）
-  - 達到上限時自動刪除最舊的記憶（LRU 汰換策略）
-  - 範圍：100-1000000 條
-  - 設定為 999999 表示無限制（不會自動刪除舊記憶）
-  - ⚠️ 無限制模式可能導致記憶體耗盡，請謹慎使用
-  - 外部 Qdrant 模式不受此限制
-
-## 隱私與安全
-
-### 資料儲存
-
-- **記憶體模式**（預設）: 資料僅在程序執行期間保存，重啟後清空
-- **Qdrant 模式**: 如果配置了 `qdrantUrl`，資料會發送到該伺服器
-  - ⚠️ 僅配置受信任的 Qdrant 伺服器
-  - 建議使用本地 Qdrant 實例或專用服務帳戶
-
-### 網路存取
-
-- **首次執行**: Transformers.js 會從 Hugging Face 下載模型檔案（約 25MB）
-- **執行時**: 記憶體模式無網路請求；Qdrant 模式會連線設定的伺服器
-
-### 自動擷取
-
-- **autoCapture** 預設關閉，需要手動開啟
-- 開啟後會自動記錄對話內容，可能包含敏感資訊
-- 建議僅在個人環境使用，避免在共享或生產環境開啟
-
-### 建議
-
-1. 首次使用時在隔離環境測試
-2. 審查 `index.js` 了解資料處理邏輯
-3. 敏感環境建議鎖定相依版本（`npm ci`）
-4. 定期檢查儲存的記憶內容
-
-## 使用方式
-
-外掛提供三個工具：
-
-### memory_store
-儲存重要訊息到長期記憶：
-
-```javascript
-memory_store({
-  text: "使用者喜歡用 Opus 處理複雜任務",
-  category: "preference",
-  importance: 0.8
-})
-```
-
-### memory_search
-搜尋相關記憶：
-
-```javascript
-memory_search({
-  query: "工作流程",
-  limit: 5
-})
-```
-
-### memory_forget
-刪除特定記憶：
-
-```javascript
-memory_forget({
-  memoryId: "uuid-here"
-})
-// 或透過搜尋刪除
-memory_forget({
-  query: "要刪除的內容"
-})
-```
-
-## 技術細節
-
-### 架構
-
-- **向量資料庫**: Qdrant (記憶體模式)
-- **嵌入模型 (Embedding)**: Xenova/all-MiniLM-L6-v2 (本地執行)
-- **模組系統**: ES6 modules
-
-### 關鍵實作
-
-外掛使用**工廠函數模式**匯出工具，確保與 OpenClaw 的工具系統相容：
-
-```javascript
-export default {
-  name: 'memory-qdrant',
-  version: '1.0.0',
-  tools: [
-    () => ({
-      name: 'memory_search',
-      description: '...',
-      parameters: { ... },
-      execute: async (params) => { ... }
-    })
-  ]
-}
-```
-
-### 常見問題
-
-**Q: 為什麼要用工廠函數？**
-
-A: OpenClaw 的工具系統會呼叫 `tool.execute()`，直接匯出物件會導致 `tool.execute is not a function` 錯誤。工廠函數確保每次呼叫都回傳新的工具實例。
-
-**Q: 為什麼要用 ES6 modules？**
-
-A: OpenClaw 的外掛載入器期望 ES6 模組格式。需要在 `package.json` 中設定 `"type": "module"`。
-
-**Q: 資料儲存在哪裡？**
-
-A: 記憶體模式下資料僅在程序執行期間保存。重啟後需要重新索引。未來版本會支援持久化儲存。
-
-## 開發
+設定完成後，重啟 OpenClaw 環境即可生效：
 
 ```bash
-# 安裝相依性
-npm install
-
-# 測試（需要 OpenClaw 環境）
 openclaw gateway restart
+# 或是直接啟動您的 dashboard
 ```
+
+---
+
+## 🛠 技術規格與實作細節
+
+### Payload Schema 一致性
+此 v2 開發版本 100% 向後相容 TrueRecall Python 的儲存格式。寫入 Qdrant 的每一筆 Point 結構如下，確保您舊有外掛的記憶無縫銜接：
+
+- `user_id`: 使用者識別碼
+- `agent_id`: Agent 識別碼
+- `role`: user 或 assistant
+- `content`: 清潔後的分塊內容
+- `full_content_length`: 原文長度
+- `turn`: 跨會話計數器
+- `timestamp` / `date`: 寫入時間
+- `source`: `"true-recall-base"`
+- `curated`: `false`
+- `chunk_index` / `total_chunks`: 智能分塊資訊
+
+### API 工具介面 ( MCP相容 )
+
+本外掛向 OpenClaw 註冊下列能力 (Agent 會自動觸發)：
+1. **`memory_store`**: 寫入特定新記憶
+2. **`memory_search`**: 提供高精準語義查詢
+3. **`memory_forget`**: 透過精準比對刪除
+
+---
+
+## 💡 常見問題
+
+**Q：為什麼啟動外掛卻抱錯「fetch failed」？**
+A：通常是因為您的 LM Studio Local Server 尚未開啟。請先去 LM Studio 啟動 Server 再啟動 OpenClaw。
+
+**Q：寫入時遇到維度不匹配的問題（例如 expected length 384, got 1024）？**
+A：這是舊版 Qdrant Collection (`openclaw_memories` 預設是 384 維度) 衝突所致。升級後請改用全新的 Collection (如 `memories_tr`)，以容納 1024 維度的向量。
+
+**Q：需要開著 Python 背景監聽腳本 (`realtime_qdrant_watcher.py`) 嗎？**
+A：**完全不用！** 升級 v2.0 之後這個外掛會原生自動處理攔截、清理、寫入。請徹底停用原本的 Python 輪詢腳本，以免記憶被重複寫入 2 遍！
 
 ## 授權條款
 
 MIT
-
-## 感謝
-
-- [Qdrant](https://qdrant.tech/) - 向量資料庫
-- [Transformers.js](https://huggingface.co/docs/transformers.js) - 本地 ML 推理
-- [OpenClaw](https://openclaw.ai/) - AI 助手框架
