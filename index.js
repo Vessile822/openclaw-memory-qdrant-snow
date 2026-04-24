@@ -73,8 +73,10 @@ function cleanContent(text) {
     ''
   );
 
-  // 2. 移除 [thinking:...] 標籤
+  // 2. 移除 thinking tags (OpenClaw [thinking:...] & 標準 <think>...</think>)
   text = text.replace(/\[thinking:[^\]]*\]/g, '');
+  text = text.replace(/<think>[\s\S]*?<\/think>/gi, '');
+  text = text.replace(/<\/think>/gi, ''); // 移除殘留的結束標籤
 
   // 3. 移除時間戳記 [Wed 2024-01-01 12:00 UTC]
   text = text.replace(/\[\w{3} \d{4}-\d{2}-\d{2} \d{2}:\d{2} [A-Z]{3}\]/g, '');
@@ -557,6 +559,41 @@ class MemoryDB {
     } catch (err) {
       return [];
     }
+  }
+
+  async updateTrueRecall(id, entry) {
+    if (this.useMemoryFallback) {
+      const index = this.memoryStore.findIndex((r) => r.id === id);
+      if (index !== -1) {
+        this.memoryStore[index] = { ...this.memoryStore[index], ...entry.payload, vector: entry.vector };
+        return this.memoryStore[index];
+      }
+      return null;
+    }
+
+    await this.ensureCollection();
+    await this.client.upsert(this.collectionName, {
+      points: [
+        {
+          id,
+          vector: entry.vector,
+          payload: entry.payload,
+        },
+      ],
+    });
+    return { id, ...entry.payload };
+  }
+
+  async deletePoints(ids) {
+    if (this.useMemoryFallback) {
+      this.memoryStore = this.memoryStore.filter(r => !ids.includes(r.id));
+      return true;
+    }
+    if (!ids || ids.length === 0) return true;
+
+    await this.ensureCollection();
+    await this.client.delete(this.collectionName, { points: ids });
+    return true;
   }
 
   async delete(id) {
@@ -1147,14 +1184,76 @@ export default function register(api) {
     };
   }
 
+  // ==========================================================================
+  // AI 工具 — memory_update
+  // ==========================================================================
+
+  function createMemoryUpdateTool() {
+    return {
+      name: 'memory_update',
+      description: '主動更新特定記憶（修改內容並重新產生向量）',
+      parameters: {
+        type: 'object',
+        properties: {
+          memoryId: { type: 'string', description: '記憶 ID' },
+          text: { type: 'string', description: '新的記憶內容' },
+        },
+        required: ['memoryId', 'text'],
+      },
+      execute: async function (_id, params) {
+        const { memoryId, text } = params;
+
+        const cleaned = cleanContent(text);
+        if (!cleaned || cleaned.length < 5) {
+          return {
+            content: [{ type: 'text', text: JSON.stringify({ success: false, message: '更新文字太短' }) }],
+          };
+        }
+
+        try {
+          const vector = await embeddings.embed(cleaned);
+          const scrollResult = await db.scrollAll();
+          const target = scrollResult.find((m) => m.id === memoryId);
+          if (!target) {
+            return {
+              content: [{ type: 'text', text: JSON.stringify({ success: false, message: `找不到 ID: ${memoryId}` }) }],
+            };
+          }
+
+          const newPayload = {
+             ...target,
+             content: cleaned,
+             text: cleaned,
+             full_content_length: cleaned.length,
+             referenceCount: (target.referenceCount || 0) + 1,
+             lastReferenced: new Date().toISOString()
+          };
+          delete newPayload.id;
+
+          await db.updateTrueRecall(memoryId, { vector, payload: newPayload });
+
+          return {
+            content: [{ type: 'text', text: JSON.stringify({ success: true, message: `記憶 ${memoryId} 已更新` }) }],
+          };
+        } catch (err) {
+          return {
+            content: [{ type: 'text', text: JSON.stringify({ success: false, message: `更新失敗: ${err.message}` }) }],
+          };
+        }
+      },
+    };
+  }
+
   // --- 註冊工具 ---
   const storeTool = createMemoryStoreTool();
   const searchTool = createMemorySearchTool();
   const forgetTool = createMemoryForgetTool();
+  const updateTool = createMemoryUpdateTool();
 
   api.registerTool(storeTool);
   api.registerTool(searchTool);
   api.registerTool(forgetTool);
+  api.registerTool(updateTool);
 
   // ==========================================================================
   // 使用者指令
@@ -1260,6 +1359,9 @@ export default function register(api) {
     api.on('before_agent_start', async (event) => {
       if (!event.prompt || event.prompt.length < 5) return;
 
+      // 🆕 如果 Prompt 是雜訊（例如 HEARTBEAT），不執行 Recall 以節省 Token 並避免干擾
+      if (isNoise(event.prompt)) return;
+
       try {
         const vector = await embeddings.embed(event.prompt);
         const results = await db.search(vector, 3, SIMILARITY_THRESHOLDS.LOW);
@@ -1303,6 +1405,7 @@ export default function register(api) {
 
         const now = new Date();
         let totalStored = 0;
+        let totalMerged = 0;
         let totalSkipped = 0;
         let totalNoiseFiltered = 0;
 
@@ -1353,15 +1456,17 @@ export default function register(api) {
               try {
                 const vector = await embeddings.embed(memory.content);
 
-                // 語義去重
-                const existing = await db.search(
-                  vector,
-                  1,
-                  SIMILARITY_THRESHOLDS.DUPLICATE
-                );
+                // 尋找出是否有相似記憶可以進行覆寫合併 (Auto-Merge)
+                const existing = await db.search(vector, 1, 0.85);
+
+                let mergedId = null;
                 if (existing.length > 0) {
-                  totalSkipped++;
-                  continue;
+                  if (existing[0].score >= SIMILARITY_THRESHOLDS.DUPLICATE) {
+                    totalSkipped++;
+                    continue;
+                  } else if (existing[0].entry.category === memory.category) {
+                    mergedId = existing[0].entry.id;
+                  }
                 }
 
                 const payload = {
@@ -1381,13 +1486,19 @@ export default function register(api) {
                   importance: memory.importance,
                   chunk_index: 0,
                   total_chunks: 1,
-                  referenceCount: 0,
+                  referenceCount: mergedId ? (existing[0].entry.referenceCount || 0) + 1 : 0,
                   lastReferenced: now.toISOString(),
                   archived: false,
                 };
 
-                await db.storeTrueRecall({ vector, payload });
-                totalStored++;
+                if (mergedId) {
+                  await db.updateTrueRecall(mergedId, { vector, payload });
+                  totalMerged++;
+                  api.logger.debug(`memory-qdrant: Auto-Merge 覆寫舊記憶 [${mergedId}]`);
+                } else {
+                  await db.storeTrueRecall({ vector, payload });
+                  totalStored++;
+                }
               } catch (err) {
                 api.logger.warn(
                   `memory-qdrant: smartExtract 寫入失敗: ${err.message}`
@@ -1405,7 +1516,7 @@ export default function register(api) {
 
           if (extractSuccess) {
             api.logger.info(
-              `memory-qdrant: 智慧精煉完成 — 儲存 ${totalStored} 條記憶，跳過 ${totalSkipped} 個重複`
+              `memory-qdrant: 智慧精煉完成 — 儲存 ${totalStored} 條新記憶，覆寫 ${totalMerged} 條舊記憶，跳過 ${totalSkipped} 個重複`
             );
             return; // 精煉成功，不需要再走原文模式
           }
@@ -1538,8 +1649,20 @@ export default function register(api) {
       const now = new Date();
       let archivedCount = 0;
       let activeCount = 0;
+      
+      const seenContents = new Set();
+      const duplicateIds = [];
 
       for (const mem of memories) {
+        // 去重判定 (Exact match)
+        if (mem.content && typeof mem.content === 'string') {
+           const contentKey = mem.content.trim().toLowerCase();
+           if (seenContents.has(contentKey)) {
+             duplicateIds.push(mem.id);
+             continue; // 重複資料不參與後續計算
+           }
+           seenContents.add(contentKey);
+        }
         if (mem.archived) continue;
 
         const markers = Array.isArray(mem.markers) ? mem.markers : [];
@@ -1570,6 +1693,12 @@ export default function register(api) {
           activeCount++;
         }
       }
+      
+      if (duplicateIds.length > 0) {
+        await db.deletePoints(duplicateIds);
+        api.logger.info(`memory-qdrant: 已清除 ${duplicateIds.length} 筆完全重複的記憶。`);
+      }
+      
       api.logger.info(`memory-qdrant: Dream 執行完畢。歸檔 ${archivedCount} 筆，活躍 ${activeCount} 筆。`);
     } catch (err) {
       api.logger.warn(`memory-qdrant: Dream 執行失敗: ${err.message}`);
