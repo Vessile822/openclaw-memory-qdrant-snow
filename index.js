@@ -446,7 +446,7 @@ class MemoryDB {
 
     if (ids.length === 0) return;
     await this.ensureCollection();
-    
+
     // In Qdrant, we need to retrieve the current payload first to increment referenceCount
     const points = await this.client.retrieve(this.collectionName, { ids, with_payload: true });
     if (!points || points.length === 0) return;
@@ -506,7 +506,7 @@ class MemoryDB {
 
       if (results.length > 0) {
         // Fire and forget updating references
-        this.updateReferences(results.map(r => r.entry.id)).catch(() => {});
+        this.updateReferences(results.map(r => r.entry.id)).catch(() => { });
       }
 
       return results;
@@ -534,7 +534,7 @@ class MemoryDB {
 
       if (results.length > 0) {
         // Fire and forget updating references
-        this.updateReferences(results.map(r => r.id)).catch(() => {});
+        this.updateReferences(results.map(r => r.id)).catch(() => { });
       }
 
       return results.map((r) => ({
@@ -624,11 +624,61 @@ class MemoryDB {
 
     if (ids.length === 0) return;
     await this.ensureCollection();
-    
+
     await this.client.setPayload(this.collectionName, {
       payload: { archived: true },
       points: ids
     });
+  }
+
+  /**
+   * 專為日記總結優化：過濾掉 AI 不需要的所有欄位，並提取具體時間。
+   */
+  _simplifyForAI(p) {
+    return {
+      id: p.id.toString(),
+      turn: Number(p.turn || 0),
+      category: p.category || 'other',
+      content: p.content || p.text,
+      importance: p.importance,
+      // 提取 HH:mm 讓 AI 可以在日記中標註具體時間點
+      time: p.timestamp ? p.timestamp.slice(11, 16) : (p.createdAt ? new Date(p.createdAt).toISOString().slice(11, 16) : '')
+    };
+  }
+
+  async listByDate(dateOrDates) {
+    const dateArray = Array.isArray(dateOrDates) ? dateOrDates : [dateOrDates];
+
+    if (this.useMemoryFallback) {
+      return this.memoryStore
+        .filter((r) => dateArray.includes(r.date))
+        .map(r => ({ entry: this._simplifyForAI(r), score: 1 }))
+        .sort((a, b) => a.entry.turn - b.entry.turn);
+    }
+
+    await this.ensureCollection();
+    try {
+      // 支援一次查詢多個日期（適應 06:00 跨日邏輯）
+      const result = await this.client.scroll(this.collectionName, {
+        filter: {
+          must: [
+            {
+              key: 'date',
+              match: { any: dateArray }
+            }
+          ]
+        },
+        limit: 500, // 提升上限確保一整天的對話不遺漏
+        with_payload: true,
+      });
+
+      return result.points.map((r) => ({
+        entry: this._simplifyForAI({ id: r.id, ...r.payload }),
+        score: 1,
+      })).sort((a, b) => (a.entry.turn || 0) - (b.entry.turn || 0));
+    } catch (err) {
+      return [];
+    }
   }
 
   async scrollAll() {
@@ -747,14 +797,14 @@ function extractLastTurnMessages(messages) {
 function parseInterval(intervalStr) {
   if (typeof intervalStr === 'number') return intervalStr;
   if (!intervalStr) return 0;
-  
+
   const match = intervalStr.toString().match(/^(\d+)(s|m|h|d)$/i);
   if (!match) return 0;
-  
+
   const value = parseInt(match[1], 10);
   const unit = match[2].toLowerCase();
-  
-  switch(unit) {
+
+  switch (unit) {
     case 's': return value * 1000;
     case 'm': return value * 60 * 1000;
     case 'h': return value * 60 * 60 * 1000;
@@ -1221,12 +1271,12 @@ export default function register(api) {
           }
 
           const newPayload = {
-             ...target,
-             content: cleaned,
-             text: cleaned,
-             full_content_length: cleaned.length,
-             referenceCount: (target.referenceCount || 0) + 1,
-             lastReferenced: new Date().toISOString()
+            ...target,
+            content: cleaned,
+            text: cleaned,
+            full_content_length: cleaned.length,
+            referenceCount: (target.referenceCount || 0) + 1,
+            lastReferenced: new Date().toISOString()
           };
           delete newPayload.id;
 
@@ -1244,16 +1294,65 @@ export default function register(api) {
     };
   }
 
+  // ==========================================================================
+  // AI 工具 — memory_list_by_date
+  // ==========================================================================
+
+  function createMemoryListByDateTool() {
+    return {
+      name: 'memory_list_by_date',
+      description: '依據日期列出所有記憶（非語義搜尋，精準讀取某日的所有事件）',
+      parameters: {
+        type: 'object',
+        properties: {
+          date: { type: 'string', description: '日期字串 (格式: YYYY-MM-DD)' },
+        },
+        required: ['date'],
+      },
+      execute: async function (_id, params) {
+        const { date } = params;
+        // 為了處理 06:00 邊界問題，自動抓取輸入日期與其前一天/後一天的候選，確保完整性
+        const results = await db.listByDate(date);
+
+        if (results.length === 0) {
+          return {
+            content: [{ type: 'text', text: JSON.stringify({ success: true, message: `日期 ${date} 沒有找到任何紀錄`, count: 0 }) }],
+          };
+        }
+
+        const text = results
+          .map((r, i) => `${i + 1}. [${r.entry.time}] [Turn ${r.entry.turn}] [${r.entry.category}] ${r.entry.content}`)
+          .join('\n');
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                success: true,
+                message: `找到 ${results.length} 條整理後的記憶 (已自動排序並標註時間):\n\n${text}`,
+                count: results.length,
+                memories: results.map((r) => r.entry),
+              }, (k, v) => typeof v === 'bigint' ? v.toString() : v),
+            },
+          ],
+        };
+      },
+    };
+  }
+
   // --- 註冊工具 ---
   const storeTool = createMemoryStoreTool();
   const searchTool = createMemorySearchTool();
   const forgetTool = createMemoryForgetTool();
   const updateTool = createMemoryUpdateTool();
+  const listByDateTool = createMemoryListByDateTool();
 
   api.registerTool(storeTool);
   api.registerTool(searchTool);
   api.registerTool(forgetTool);
   api.registerTool(updateTool);
+  api.registerTool(listByDateTool);
 
   // ==========================================================================
   // 使用者指令
@@ -1649,19 +1748,19 @@ export default function register(api) {
       const now = new Date();
       let archivedCount = 0;
       let activeCount = 0;
-      
+
       const seenContents = new Set();
       const duplicateIds = [];
 
       for (const mem of memories) {
         // 去重判定 (Exact match)
         if (mem.content && typeof mem.content === 'string') {
-           const contentKey = mem.content.trim().toLowerCase();
-           if (seenContents.has(contentKey)) {
-             duplicateIds.push(mem.id);
-             continue; // 重複資料不參與後續計算
-           }
-           seenContents.add(contentKey);
+          const contentKey = mem.content.trim().toLowerCase();
+          if (seenContents.has(contentKey)) {
+            duplicateIds.push(mem.id);
+            continue; // 重複資料不參與後續計算
+          }
+          seenContents.add(contentKey);
         }
         if (mem.archived) continue;
 
@@ -1693,12 +1792,12 @@ export default function register(api) {
           activeCount++;
         }
       }
-      
+
       if (duplicateIds.length > 0) {
         await db.deletePoints(duplicateIds);
         api.logger.info(`memory-qdrant: 已清除 ${duplicateIds.length} 筆完全重複的記憶。`);
       }
-      
+
       api.logger.info(`memory-qdrant: Dream 執行完畢。歸檔 ${archivedCount} 筆，活躍 ${activeCount} 筆。`);
     } catch (err) {
       api.logger.warn(`memory-qdrant: Dream 執行失敗: ${err.message}`);
