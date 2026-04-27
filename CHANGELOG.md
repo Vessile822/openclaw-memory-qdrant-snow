@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.1.2] - 2026-04-27
+
+### Added
+- **Dedicated Extraction Model Configuration**: Introduced `extractionBaseUrl` and `extractionModelId` to allow separating the heavy extraction LLM from the lightweight embedding model.
+- **Precision Date Retrieval**: Added `memory_list_by_date` tool with cross-date buffering to ensure complete daily logs for automated diary summaries.
+- **Content Sanitization**: Enhanced XML tag filtering (e.g., `<final>`, `<think>`) to prevent technical noise from polluting the semantic memory.
+- **Documentation Overhaul**: Fully documented all v3.x configuration parameters in `README.md` and `README_EN.md`.
+
+### Fixed
+- Redundant logic in the batch extraction pipeline to improve processing performance.
+- Inconsistent variable naming between UI configuration and backend runtimes.
+
 ## [3.1.0] - 2026-04-23
 
 ### Fixed

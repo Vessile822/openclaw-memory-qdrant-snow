@@ -126,14 +126,18 @@ npm install
         "enabled": true,
         "config": {
           "qdrantUrl": "http://127.0.0.1:6333",
+          "collectionName": "memories_tr",
           "embeddingBaseUrl": "http://127.0.0.1:1234/v1",
+          "embeddingModelId": "text-embedding-desu-snowflake-arctic-embed-l-v2.0-finetuned-amharic-final",
+          "embeddingModelDimension": 1024,
           
           "autoCapture": true,
-          "autoDreamInterval": "24h",   // Auto-Dream 自動遺忘機制執行週期
+          "autoDreamInterval": "24h",
           
-          "smartExtraction": true,      // 啟用 LLM 智慧精煉
-          "extractionLlmBaseUrl": "http://localhost:18789/v1",
-          "extractionLlmModel": "Doubao-Seed-2.0-Code"
+          "smartExtraction": true,
+          "extractionBaseUrl": "http://localhost:18789/v1",
+          "extractionModelId": "Doubao-Seed-2.0-Code",
+          "maxExtractionChars": 8000
         }
       }
     }
@@ -146,6 +150,22 @@ npm install
 openclaw gateway restart
 ```
 
+#### 參數詳細說明 (Detailed Parameters)
+
+| 參數 (Parameter) | 說明 (Description) | 預設值 (Default) |
+| :--- | :--- | :--- |
+| `qdrantUrl` | Qdrant 資料庫的 API 位址 | `http://127.0.0.1:6333` |
+| `collectionName` | 存儲記憶的集合名稱 | `memories_tr` |
+| `embeddingBaseUrl` | Embedding 模型 (LM Studio) 的 API 位址 | `http://127.0.0.1:1234/v1` |
+| `embeddingModelId` | 使用的向量模型名稱 | `(Snowflake 2.0)` |
+| `embeddingModelDimension` | 向量維度 (Snowflake 為 1024) | `1024` |
+| `autoCapture` | 是否在對話結束後自動捕捉新記憶 | `true` |
+| `autoDreamInterval` | 自動執行「夢境整理」(去重/評分/遺忘) 的間隔 | `24h` |
+| `smartExtraction` | 是否啟用 LLM 智慧精煉 (將對話濃縮為結構化事實) | `false` |
+| `extractionBaseUrl` | **[NEW]** 精煉專用的 LLM API 位址 (可與 Embedding 分開) | (同 Embedding) |
+| `extractionModelId` | **[NEW]** 精煉專用的 LLM 模型名稱 (建議用強大的模型) | (同 Embedding) |
+| `maxExtractionChars` | **[NEW]** 每次精煉時送入 LLM 的最大字元數 (限制 Context) | `8000` |
+
 ---
 
 ## 🛠 互動與模組 / Capabilities
@@ -153,8 +173,12 @@ openclaw gateway restart
 - **純背景被動捕捉 (Passive Capture)**: 主程式隱藏於背景，無需任何人工干預即可自動完備大腦知識庫。
 - **手動/定時夢境 (Auto-Dreaming)**: 可被動等待 `24h` 執行，也可透過 CLI 強制觸發 `openclaw memory-qdrant dream` 來整理老舊記憶。
 - **主動查詢指令 (Active Commands)**: 
-  - Discord/UI 對話窗內支援 `/recall [關鍵字]` 直接提取關聯記憶。
-- **MCP 支援 (MCP Integrations)**: 向其他 Agent 暴露核心工具，支援跨 Agent 呼叫 `memory_store`, `memory_search`, `memory_forget`。
+  - 對話窗內支援 `/recall [關鍵字]` 直接提取關聯語義記憶。
+- **AI 專用工具集 (Agent Tools)**: 
+  - `memory_store`: 結構化儲存記憶。
+  - `memory_search`: 語義搜尋相關背景。
+  - `memory_list_by_date`: **[NEW]** 日期精準檢索。支援跨日期緩衝抓取，自動過濾雜訊，最適合「每日日記總結」任務。
+  - `memory_forget_by_id`: 精準刪除特定條目。
 
 ---
 `License: MIT`

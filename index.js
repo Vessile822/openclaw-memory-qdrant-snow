@@ -21,7 +21,7 @@ import { QdrantClient } from '@qdrant/js-client-rest';
 import { randomUUID } from 'crypto';
 import { createHash } from 'crypto';
 import { isNoise } from './noise-filter.js';
-import { smartExtract } from './smart-extractor.js';
+import { batchExtract, processBatch } from './smart-extractor.js';
 
 // ============================================================================
 // 常數設定
@@ -46,8 +46,8 @@ const SIMILARITY_THRESHOLDS = {
 };
 
 // Smart Extraction 預設值
-const DEFAULT_EXTRACTION_LLM_BASE_URL = 'http://localhost:18789/v1';
-const DEFAULT_EXTRACTION_LLM_MODEL = 'Doubao-Seed-2.0-Code';
+const DEFAULT_EXTRACTION_LLM_BASE_URL = 'http://127.0.0.1:1234/v1';
+const DEFAULT_EXTRACTION_LLM_MODEL = 'mudler/qwen3.6-35b-a3b-apex-gguf/qwen3.6-35b-a3b-apex-i-compact.gguf';
 const DEFAULT_EXTRACTION_MAX_CHARS = 8000;
 const DEFAULT_MIN_IMPORTANCE = 'medium';
 
@@ -77,6 +77,10 @@ function cleanContent(text) {
   text = text.replace(/\[thinking:[^\]]*\]/g, '');
   text = text.replace(/<think>[\s\S]*?<\/think>/gi, '');
   text = text.replace(/<\/think>/gi, ''); // 移除殘留的結束標籤
+
+  // 移除 final 標籤但保留裡面的文字
+  text = text.replace(/<final>([\s\S]*?)<\/final>/gi, '$1');
+  text = text.replace(/<\/?final>/gi, '');
 
   // 3. 移除時間戳記 [Wed 2024-01-01 12:00 UTC]
   text = text.replace(/\[\w{3} \d{4}-\d{2}-\d{2} \d{2}:\d{2} [A-Z]{3}\]/g, '');
@@ -828,12 +832,12 @@ export default function register(api) {
 
   // --- Smart Extraction 設定 ---
   const useSmartExtraction = cfg.smartExtraction === true;
-  const extractionLlmBaseUrl =
-    cfg.extractionLlmBaseUrl || DEFAULT_EXTRACTION_LLM_BASE_URL;
-  const extractionLlmModel =
-    cfg.extractionLlmModel || DEFAULT_EXTRACTION_LLM_MODEL;
+  const extractionBaseUrl =
+    cfg.extractionBaseUrl || cfg.extractionLlmBaseUrl || embeddingBaseUrl;
+  const extractionModelId =
+    cfg.extractionModelId || cfg.extractionLlmModel || embeddingModel;
   const extractionMaxChars =
-    cfg.extractionMaxChars || DEFAULT_EXTRACTION_MAX_CHARS;
+    cfg.maxExtractionChars || cfg.extractionMaxChars || DEFAULT_EXTRACTION_MAX_CHARS;
   const extractionMinImportance =
     cfg.extractionMinImportance || DEFAULT_MIN_IMPORTANCE;
 
@@ -1504,144 +1508,24 @@ export default function register(api) {
 
         const now = new Date();
         let totalStored = 0;
-        let totalMerged = 0;
         let totalSkipped = 0;
         let totalNoiseFiltered = 0;
 
-        // ============================================================
-        // 🔧 Bug Fix: 只取最後一輪訊息（不再遍歷整個 Context Window）
-        // ============================================================
         const lastTurnMessages = extractLastTurnMessages(event.messages);
-
         if (lastTurnMessages.length === 0) return;
 
-        // ============================================================
-        // Smart Extraction 分支
-        // ============================================================
-        if (useSmartExtraction) {
-          // 組合最後一輪的對話文字
-          let conversationText = '';
-          for (const msg of lastTurnMessages) {
-            let text = '';
-            if (typeof msg.content === 'string') {
-              text = msg.content;
-            } else if (Array.isArray(msg.content)) {
-              for (const block of msg.content) {
-                if (block && typeof block === 'object' && block.type === 'text' && block.text) {
-                  text += block.text;
-                }
-              }
-            }
-            if (text) {
-              conversationText += `[${msg.role}]: ${text}\n\n`;
-            }
-          }
-
-          if (!conversationText || conversationText.length < 20) return;
-
-          // 呼叫 LLM 精煉
-          let extractSuccess = false;
-          try {
-            const memories = await smartExtract(conversationText, {
-              llmBaseUrl: extractionLlmBaseUrl,
-              llmModel: extractionLlmModel,
-              maxChars: extractionMaxChars,
-              minImportance: extractionMinImportance,
-              log: (msg) => api.logger.debug(`memory-qdrant: ${msg}`),
-            });
-            extractSuccess = true;
-
-            for (const memory of memories) {
-              try {
-                const vector = await embeddings.embed(memory.content);
-
-                // 尋找出是否有相似記憶可以進行覆寫合併 (Auto-Merge)
-                const existing = await db.search(vector, 1, 0.85);
-
-                let mergedId = null;
-                if (existing.length > 0) {
-                  if (existing[0].score >= SIMILARITY_THRESHOLDS.DUPLICATE) {
-                    totalSkipped++;
-                    continue;
-                  } else if (existing[0].entry.category === memory.category) {
-                    mergedId = existing[0].entry.id;
-                  }
-                }
-
-                const payload = {
-                  user_id: defaultUserId,
-                  agent_id: defaultAgentId,
-                  role: 'assistant',
-                  content: memory.content,
-                  abstract: memory.abstract,
-                  overview: memory.overview,
-                  full_content_length: memory.content.length,
-                  turn: currentTurn,
-                  timestamp: now.toISOString(),
-                  date: now.toISOString().slice(0, 10),
-                  source: 'smart-extraction',
-                  curated: false,
-                  category: memory.category,
-                  importance: memory.importance,
-                  chunk_index: 0,
-                  total_chunks: 1,
-                  referenceCount: mergedId ? (existing[0].entry.referenceCount || 0) + 1 : 0,
-                  lastReferenced: now.toISOString(),
-                  archived: false,
-                };
-
-                if (mergedId) {
-                  await db.updateTrueRecall(mergedId, { vector, payload });
-                  totalMerged++;
-                  api.logger.debug(`memory-qdrant: Auto-Merge 覆寫舊記憶 [${mergedId}]`);
-                } else {
-                  await db.storeTrueRecall({ vector, payload });
-                  totalStored++;
-                }
-              } catch (err) {
-                api.logger.warn(
-                  `memory-qdrant: smartExtract 寫入失敗: ${err.message}`
-                );
-              }
-            }
-
-            currentTurn++;
-          } catch (err) {
-            api.logger.warn(
-              `memory-qdrant: Extraction failed, fallback to RAW: ${err.message}`
-            );
-            // 降級到原文模式（繼續往下走，不 return）
-          }
-
-          if (extractSuccess) {
-            api.logger.info(
-              `memory-qdrant: 智慧精煉完成 — 儲存 ${totalStored} 條新記憶，覆寫 ${totalMerged} 條舊記憶，跳過 ${totalSkipped} 個重複`
-            );
-            return; // 精煉成功，不需要再走原文模式
-          }
-        }
-
-        // ============================================================
-        // 原文模式（smartExtraction 關閉 或 精煉失敗時的降級路徑）
-        // ============================================================
         for (const msg of lastTurnMessages) {
           if (!msg || typeof msg !== 'object') continue;
 
           const role = msg.role;
           if (!role || !['user', 'assistant'].includes(role)) continue;
 
-          // 提取文字內容
           let rawContent = '';
           if (typeof msg.content === 'string') {
             rawContent = msg.content;
           } else if (Array.isArray(msg.content)) {
             for (const block of msg.content) {
-              if (
-                block &&
-                typeof block === 'object' &&
-                block.type === 'text' &&
-                block.text
-              ) {
+              if (block && typeof block === 'object' && block.type === 'text' && block.text) {
                 rawContent += block.text;
               }
             }
@@ -1649,39 +1533,28 @@ export default function register(api) {
 
           if (!rawContent || rawContent.length < 5) continue;
 
-          // 移除已注入的記憶上下文，保留使用者的原始對話，而不是整段跳過
           if (rawContent.includes('<relevant-memories>')) {
             rawContent = rawContent.replace(/<relevant-memories>[\s\S]*?<\/relevant-memories>/gi, '').trim();
           }
 
           if (!rawContent || rawContent.length < 5) continue;
 
-          // 🆕 雜訊過濾
           if (isNoise(rawContent)) {
             totalNoiseFiltered++;
-            api.logger.debug(
-              `memory-qdrant: 跳過雜訊: ${rawContent.slice(0, 50)}`
-            );
+            api.logger.debug(`memory-qdrant: 跳過雜訊: ${rawContent.slice(0, 50)}`);
             continue;
           }
 
-          // 清洗
           const cleaned = cleanContent(rawContent);
           if (!cleaned || cleaned.length < 5) continue;
 
-          // Chunking
           const chunks = chunkText(cleaned);
 
           for (const chunk of chunks) {
             try {
               const vector = await embeddings.embed(chunk.text);
 
-              // 語義去重
-              const existing = await db.search(
-                vector,
-                1,
-                SIMILARITY_THRESHOLDS.DUPLICATE
-              );
+              const existing = await db.search(vector, 1, SIMILARITY_THRESHOLDS.DUPLICATE);
               if (existing.length > 0) {
                 totalSkipped++;
                 continue;
@@ -1707,29 +1580,23 @@ export default function register(api) {
                 referenceCount: 0,
                 lastReferenced: now.toISOString(),
                 archived: false,
+                status: 'staging'
               };
 
               await db.storeTrueRecall({ vector, payload });
               totalStored++;
             } catch (err) {
-              api.logger.warn(
-                `memory-qdrant: autoCapture chunk 失敗: ${err.message}`
-              );
+              api.logger.warn(`memory-qdrant: autoCapture chunk 失敗: ${err.message}`);
             }
           }
-
           currentTurn++;
         }
 
         if (totalStored > 0 || totalNoiseFiltered > 0) {
-          api.logger.info(
-            `memory-qdrant: 擷取完成 — 儲存 ${totalStored} 個 chunk，跳過 ${totalSkipped} 個重複，過濾 ${totalNoiseFiltered} 個雜訊`
-          );
+          api.logger.info(`memory-qdrant: 擷取完成 — 儲存 ${totalStored} 個 staging chunk，跳過 ${totalSkipped} 個重複，過濾 ${totalNoiseFiltered} 個雜訊`);
         }
       } catch (err) {
-        api.logger.warn(
-          `memory-qdrant: autoCapture 失敗: ${err.message}`
-        );
+        api.logger.warn(`memory-qdrant: autoCapture 失敗: ${err.message}`);
       }
     });
   }
@@ -1808,6 +1675,128 @@ export default function register(api) {
     setInterval(runDream, autoDreamIntervalMs);
     api.logger.info(`memory-qdrant: 已啟用定期 Dream 整理，間隔 ${autoDreamIntervalStr} (${autoDreamIntervalMs} 毫秒)`);
   }
+
+
+  // ==========================================================================
+  // 批次精煉機制 (Batch Extraction)
+  // ==========================================================================
+
+  async function runBatchExtractionPipeline() {
+    if (!useSmartExtraction) return;
+
+    api.logger.info('memory-qdrant: 正在執行 Batch Extraction 批次精煉...');
+    try {
+      const allMemories = await db.scrollAll();
+      const stagingMemories = allMemories.filter(m => m.status === 'staging' && !m.archived);
+
+      if (stagingMemories.length === 0) {
+        api.logger.info('memory-qdrant: 沒有需要精煉的 staging 記憶。');
+        return;
+      }
+
+      // 組合對話
+      stagingMemories.sort((a, b) => (a.turn || 0) - (b.turn || 0));
+      let conversationText = '';
+      for (const mem of stagingMemories) {
+        conversationText += `[${mem.role}]: ${mem.content}\n\n`;
+      }
+
+      const searchCuratedFn = async (text) => {
+        const vector = await embeddings.embed(text);
+        const results = await db.search(vector, 3, 0.7);
+        return results.filter(r => r.entry.status !== 'staging').map(r => r.entry);
+      };
+
+      const { processBatch } = await import('./smart-extractor.js');
+
+      const operations = await processBatch(conversationText, searchCuratedFn, {
+        llmBaseUrl: extractionBaseUrl,
+        llmModel: extractionModelId,
+        maxChars: extractionMaxChars,
+        minImportance: extractionMinImportance,
+        log: (msg) => api.logger.debug(`memory-qdrant: ${msg}`),
+      });
+
+      let created = 0;
+      let updated = 0;
+      let archived = 0;
+
+      const now = new Date();
+      let currentTurn;
+      try {
+        currentTurn = (await db.getMaxTurn()) + 1;
+      } catch (_) {
+        currentTurn = 1;
+      }
+
+      for (const op of operations) {
+        if (op.type === 'CREATE') {
+          const vector = await embeddings.embed(op.payload.content);
+          const payload = {
+            user_id: defaultUserId,
+            agent_id: defaultAgentId,
+            role: 'assistant',
+            content: op.payload.content,
+            abstract: op.payload.abstract,
+            overview: op.payload.overview,
+            full_content_length: op.payload.content.length,
+            turn: currentTurn++,
+            timestamp: now.toISOString(),
+            date: now.toISOString().slice(0, 10),
+            source: 'smart-extraction',
+            curated: true,
+            category: op.payload.category,
+            importance: op.payload.importance,
+            chunk_index: 0,
+            total_chunks: 1,
+            referenceCount: 0,
+            lastReferenced: now.toISOString(),
+            archived: false,
+            status: 'curated'
+          };
+          await db.storeTrueRecall({ vector, payload });
+          created++;
+        } else if (op.type === 'UPDATE') {
+          const vector = await embeddings.embed(op.payload.content);
+          const target = allMemories.find(m => m.id === op.id);
+          if (target) {
+            const payload = {
+              ...target,
+              content: op.payload.content,
+              abstract: op.payload.abstract,
+              overview: op.payload.overview,
+              full_content_length: op.payload.content.length,
+              referenceCount: (target.referenceCount || 0) + 1,
+              lastReferenced: now.toISOString(),
+              status: 'curated'
+            };
+            delete payload.id;
+            await db.updateTrueRecall(op.id, { vector, payload });
+            updated++;
+          }
+        } else if (op.type === 'ARCHIVE') {
+          await db.archivePoints([op.id]);
+          archived++;
+        }
+      }
+
+      // 刪除 staging 記憶
+      const stagingIds = stagingMemories.map(m => m.id);
+      await db.deletePoints(stagingIds);
+
+      api.logger.info(`memory-qdrant: Batch Extraction 完成。建立 ${created} 筆，更新 ${updated} 筆，歸檔 ${archived} 筆，刪除 ${stagingIds.length} 筆 staging 記憶。`);
+    } catch (err) {
+      api.logger.warn(`memory-qdrant: Batch Extraction 失敗: ${err.message}`);
+    }
+  }
+
+  // 每分鐘檢查一次，如果是 00:00, 03:00, 06:00... 則觸發
+  setInterval(() => {
+    const now = new Date();
+    if (now.getHours() % 3 === 0 && now.getMinutes() === 0) {
+      runBatchExtractionPipeline();
+    }
+  }, 60000);
 
   // ==========================================================================
   // CLI 命令

@@ -1,7 +1,7 @@
 ---
 name: memory-qdrant
 description: "TrueRecall v3.1: 智慧記憶精煉系統。支援 Qdrant + 本地 LM Studio，結合 Noise Filter 與 Smart Extraction (LLM)，自動萃取、分類並管理對話記憶。"
-version: 3.1.0
+version: 3.1.2
 author: Vessile822
 homepage: https://github.com/Vessile822/openclaw-memory-qdrant-snow
 tags: [memory, semantic-search, qdrant, lm-studio, embeddings, local-ai, vector-db, true-recall]
@@ -11,7 +11,7 @@ metadata:
       bins: [node, npm]
 ---
 
-# memory-qdrant (TrueRecall v3.1)
+# memory-qdrant (TrueRecall v3.1.2)
 
 **推薦使用時機**：當你希望 OpenClaw 能跨對話記住使用者的習慣、決策與重要數據，並且期望有智慧篩選機制去除招呼語等雜訊時。
 
@@ -99,6 +99,7 @@ openclaw gateway restart
 |------|------|
 | `memory_store` | 寫入指定內容到語義記憶庫 |
 | `memory_search` | 以自然語言查詢，回傳最相關的歷史記憶 |
+| `memory_list_by_date` | 日期精準檢索工具，過濾雜訊後回傳指定日期的完整對話軌跡 |
 | `memory_forget` | 透過 ID 或語義比對刪除特定記憶 |
 
 ## 🔐 隱私說明

@@ -115,14 +115,18 @@ Adjust your main OpenClaw profile configuration (e.g., `~/.openclaw/openclaw.jso
         "enabled": true,
         "config": {
           "qdrantUrl": "http://127.0.0.1:6333",
+          "collectionName": "memories_tr",
           "embeddingBaseUrl": "http://127.0.0.1:1234/v1",
+          "embeddingModelId": "text-embedding-desu-snowflake",
+          "embeddingModelDimension": 1024,
           
           "autoCapture": true,
           "autoDreamInterval": "24h",
           
-          "smartExtraction": true, 
-          "extractionLlmBaseUrl": "http://localhost:18789/v1",
-          "extractionLlmModel": "Doubao-Seed-2.0-Code"
+          "smartExtraction": true,
+          "extractionBaseUrl": "http://localhost:18789/v1",
+          "extractionModelId": "Doubao-Seed-2.0-Code",
+          "maxExtractionChars": 8000
         }
       }
     }
@@ -135,14 +139,35 @@ Restart to apply plugin rules:
 openclaw gateway restart
 ```
 
+#### Detailed Parameters
+
+| Parameter | Description | Default |
+| :--- | :--- | :--- |
+| `qdrantUrl` | Qdrant Database API endpoint | `http://127.0.0.1:6333` |
+| `collectionName` | The name of the memory collection | `memories_tr` |
+| `embeddingBaseUrl` | Embedding model (LM Studio) API endpoint | `http://127.0.0.1:1234/v1` |
+| `embeddingModelId` | Vector model name | `(Snowflake 2.0)` |
+| `embeddingModelDimension` | Vector dimension (Snowflake is 1024) | `1024` |
+| `autoCapture` | Automatically capture memories when conversation ends | `true` |
+| `autoDreamInterval` | Interval for Auto-Dream (Dedup/Score/Forget) | `24h` |
+| `smartExtraction` | Enable LLM Smart Extraction (distill to facts) | `false` |
+| `extractionBaseUrl` | **[NEW]** API endpoint for Extraction LLM (can be separate) | (Same as Embedding) |
+| `extractionModelId` | **[NEW]** LLM name for Extraction (recommend strong models) | (Same as Embedding) |
+| `maxExtractionChars` | **[NEW]** Max chars sent to LLM per extraction | `8000` |
+
 ---
 
 ## 🛠 Capabilities
 
 - **Passive Capture**: Runs purely in the background to build the agent's knowledge base without disruptive delays.
 - **Auto-Dreaming**: Auto-maintains the database every 24h, or can be triggered via CLI.
-- **Active Commands**: Supports standard `/recall [keyword]` within UI/Discord chats.
-- **MCP Integrations**: Exposes standard methods (`memory_store`, `memory_search`, `memory_forget`) to other Agents.
+- **Active Commands**: 
+  - Supports standard `/recall [keyword]` within UI/Discord chats to fetch semantic memories.
+- **AI Agent Tools**: 
+  - `memory_store`: Structurally store new memories.
+  - `memory_search`: Semantic search for relevant context.
+  - `memory_list_by_date`: **[NEW]** Precision date retrieval. Supports cross-date buffering and noise filtering, perfect for automated daily diary summaries.
+  - `memory_forget_by_id`: Precisely delete specific entries.
 
 ---
 `License: MIT`

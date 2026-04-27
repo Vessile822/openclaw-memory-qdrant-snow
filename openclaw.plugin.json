@@ -26,6 +26,21 @@
         "default": "text-embedding-desu-snowflake-arctic-embed-l-v2.0-finetuned-amharic-final",
         "description": "Embedding 模型名稱"
       },
+      "embeddingModelDimension": {
+        "type": "number",
+        "default": 1024,
+        "description": "向量模型維度 (例如: text-embedding-desu-snowflake 的維度通常是 1024)"
+      },
+      "extractionBaseUrl": {
+        "type": "string",
+        "default": "",
+        "description": "智慧精煉模型 (LLM) API 端點 (若留空則共用 Embedding API)"
+      },
+      "extractionModelId": {
+        "type": "string",
+        "default": "",
+        "description": "智慧精煉模型 (LLM) 名稱 (例如: gemini-1.5-flash 或 gpt-4o)"
+      },
       "defaultUserId": {
         "type": "string",
         "default": "user",

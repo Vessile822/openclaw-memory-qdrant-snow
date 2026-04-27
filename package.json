@@ -1,7 +1,7 @@
 {
   "name": "openclaw-memory-qdrant",
-  "version": "3.1.0",
-  "description": "OpenClaw TrueRecall v3.1 — smart memory with layered categories, dream function, LLM extraction, Qdrant + LM Studio",
+  "version": "3.1.2",
+  "description": "OpenClaw TrueRecall v3.1 — smart memory with layered categories, dream function, LLM extraction, Qdrant + LM Studio (Optimized for v3.1.2)",
   "type": "module",
   "main": "index.js",
   "keywords": [
