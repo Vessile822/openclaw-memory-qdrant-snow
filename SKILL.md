@@ -89,8 +89,6 @@ npm install
 openclaw gateway restart
 ```
 
-> ⚠️ **重要**：若您之前有執行 `realtime_qdrant_watcher.py`，請立刻停用！v2.0 已原生處理記憶擷取，繼續執行會導致**重複寫入**。
-
 ## 📚 可用工具
 
 此外掛向 OpenClaw 暴露三個工具（Agent 會自動按需呼叫）：

@@ -283,21 +283,55 @@ class LLMClient {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
 
-    try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: this.model,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt },
-          ],
-          temperature: 0.1,
-          response_format: { type: 'json_object' },
-        }),
-        signal: controller.signal,
-      });
+    let response;
+      try {
+        response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: this.model,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: userPrompt },
+            ],
+            temperature: 0.1,
+            response_format: { type: 'json_object' },
+          }),
+          signal: controller.signal,
+        });
+        
+        if (!response.ok) {
+           throw new Error('API Error: ' + response.status + ' ' + response.statusText);
+        }
+      } catch (err) {
+        console.warn('⚠️ LM Studio 模型調用失敗，嘗試 Fallback 到 Gemini API: ', err.message);
+        
+        // Fallback 到 Gemini API
+        try {
+          const cfgStr = require('fs').readFileSync('C:\\Users\\Vess\\.openclaw\\openclaw.json', 'utf8');
+          const apiKey = JSON.parse(cfgStr).models.providers.google.apiKey;
+          
+          const gRes = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + apiKey, {
+             method: 'POST',
+             headers: { 'Content-Type': 'application/json' },
+             body: JSON.stringify({
+               system_instruction: { parts: { text: systemPrompt } },
+               contents: [{ parts: [{ text: userPrompt }] }],
+               generationConfig: { temperature: 0.1, responseMimeType: 'application/json' }
+             }),
+             signal: controller.signal,
+          });
+          
+          if (!gRes.ok) throw new Error('Gemini Fallback 失敗');
+          const gData = await gRes.json();
+          let rawContent = gData.candidates[0].content.parts[0].text.trim();
+          
+          return JSON.parse(rawContent);
+        } catch (fbErr) {
+          console.error('❌ Fallback 也失敗: ', fbErr.message);
+          return null;
+        }
+      }
 
       if (!response.ok) {
         const errText = await response.text().catch(() => '');

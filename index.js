@@ -972,10 +972,16 @@ export default function register(api) {
 
         let storedCount = 0;
         let skippedDuplicates = 0;
+        let skippedShortChunks = chunks.filter(c => c.text.length < 50).length;
 
         // 4. 逐 chunk 嵌入 + 寫入
         for (const chunk of chunks) {
           try {
+            if (chunk.text.length < 50) {
+              api.logger.debug(`memory-qdrant: chunk ${chunk.chunk_index} 文字太短（${chunk.text.length} < 50），跳過`);
+              continue;
+            }
+
             const vector = await embeddings.embed(chunk.text);
 
             // 去重檢查
@@ -1006,6 +1012,7 @@ export default function register(api) {
               referenceCount: 0,
               lastReferenced: now.toISOString(),
               archived: false,
+              status: 'staging',
             };
 
             await db.storeTrueRecall({ vector, payload });
@@ -1017,13 +1024,14 @@ export default function register(api) {
           }
         }
 
-        const msg =
-          storedCount > 0
-            ? `已儲存 ${storedCount} 個 chunk (turn ${currentTurn})${skippedDuplicates > 0
-              ? `，跳過 ${skippedDuplicates} 個重複`
-              : ''
-            }`
-            : `全部 ${skippedDuplicates} 個 chunk 重複，未寫入`;
+        let msg;
+        if (storedCount > 0) {
+          msg = `已儲存 ${storedCount} 個 chunk (turn ${currentTurn})${skippedDuplicates > 0 ? `，跳過 ${skippedDuplicates} 個重複` : ''}${skippedShortChunks > 0 ? `，跳過 ${skippedShortChunks} 個太短（<50字）` : ''}`;
+        } else if (skippedShortChunks > 0) {
+          msg = `全部 ${skippedShortChunks} 個 chunk 太短（<50字）未寫入`;
+        } else {
+          msg = `全部 ${skippedDuplicates} 個 chunk 重複，未寫入`;
+        }
 
         return {
           content: [
@@ -1034,6 +1042,7 @@ export default function register(api) {
                 message: msg,
                 storedChunks: storedCount,
                 skippedDuplicates,
+                skippedShortChunks,
                 turn: currentTurn,
                 totalChunks: chunks.length,
               }, (k, v) => typeof v === 'bigint' ? v.toString() : v),
@@ -1593,7 +1602,7 @@ export default function register(api) {
         }
 
         if (totalStored > 0 || totalNoiseFiltered > 0) {
-          api.logger.info(`memory-qdrant: 擷取完成 — 儲存 ${totalStored} 個 staging chunk，跳過 ${totalSkipped} 個重複，過濾 ${totalNoiseFiltered} 個雜訊`);
+          api.logger.info(`memory-qdrant: 回合結束 - 儲存 ${totalStored} 筆 staging chunk，略過 ${totalSkipped} 筆重複，過濾 ${totalNoiseFiltered} 筆雜訊`);
         }
       } catch (err) {
         api.logger.warn(`memory-qdrant: autoCapture 失敗: ${err.message}`);
