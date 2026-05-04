@@ -51,19 +51,6 @@
         "default": "main",
         "description": "預設 Agent ID（寫入 Qdrant payload）"
       },
-      "autoCapture": {
-        "type": "boolean",
-        "default": true
-      },
-      "autoRecall": {
-        "type": "boolean",
-        "default": false
-      },
-      "autoDreamInterval": {
-        "type": ["string", "number"],
-        "default": "24h",
-        "description": "Auto Dream 的自動清理間隔時間，支援毫秒數或者字串格式（例如 '24h', '1d', '30m'）"
-      },
       "smartExtraction": {
         "type": "boolean",
         "default": false,
@@ -138,18 +125,6 @@
       "label": "預設 Agent ID",
       "placeholder": "main",
       "advanced": true
-    },
-    "autoCapture": {
-      "label": "自動擷取",
-      "help": "對話結束後自動擷取並儲存記憶（搭配 Noise Filter + 語義去重）"
-    },
-    "autoRecall": {
-      "label": "自動回憶注入",
-      "help": "對話前自動注入相關歷史記憶"
-    },
-    "autoDreamInterval": {
-      "label": "Auto Dream 的排程間隔",
-      "help": "定時清理、評分與拋棄老舊記憶。可輸入 '24h', '1d', '30m' 或是毫秒整數（設定為 0 代表關閉功能）"
     },
     "smartExtraction": {
       "label": "🧠 智慧精煉",

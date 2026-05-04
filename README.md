@@ -131,13 +131,10 @@ npm install
           "embeddingModelId": "text-embedding-desu-snowflake-arctic-embed-l-v2.0-finetuned-amharic-final",
           "embeddingModelDimension": 1024,
           
-          "autoCapture": true,
-          "autoDreamInterval": "24h",
-          
           "smartExtraction": true,
-          "extractionBaseUrl": "http://localhost:18789/v1",
-          "extractionModelId": "Doubao-Seed-2.0-Code",
-          "maxExtractionChars": 8000
+          "extractionLlmBaseUrl": "http://localhost:18789/v1",
+          "extractionLlmModel": "Doubao-Seed-2.0-Code",
+          "extractionMaxChars": 8000
         }
       }
     }
@@ -159,19 +156,17 @@ openclaw gateway restart
 | `embeddingBaseUrl` | Embedding 模型 (LM Studio) 的 API 位址 | `http://127.0.0.1:1234/v1` |
 | `embeddingModelId` | 使用的向量模型名稱 | `(Snowflake 2.0)` |
 | `embeddingModelDimension` | 向量維度 (Snowflake 為 1024) | `1024` |
-| `autoCapture` | 是否在對話結束後自動捕捉新記憶 | `true` |
-| `autoDreamInterval` | 自動執行「夢境整理」(去重/評分/遺忘) 的間隔 | `24h` |
 | `smartExtraction` | 是否啟用 LLM 智慧精煉 (將對話濃縮為結構化事實) | `false` |
-| `extractionBaseUrl` | **[NEW]** 精煉專用的 LLM API 位址 (可與 Embedding 分開) | (同 Embedding) |
-| `extractionModelId` | **[NEW]** 精煉專用的 LLM 模型名稱 (建議用強大的模型) | (同 Embedding) |
-| `maxExtractionChars` | **[NEW]** 每次精煉時送入 LLM 的最大字元數 (限制 Context) | `8000` |
+| `extractionLlmBaseUrl` | **[NEW]** 精煉專用的 LLM API 位址 (可與 Embedding 分開) | `http://localhost:18789/v1` |
+| `extractionLlmModel` | **[NEW]** 精煉專用的 LLM 模型名稱 (建議用強大的模型) | `Doubao-Seed-2.0-Code` |
+| `extractionMaxChars` | **[NEW]** 每次精煉時送入 LLM 的最大字元數 (限制 Context) | `8000` |
 
 ---
 
 ## 🛠 互動與模組 / Capabilities
 
-- **純背景被動捕捉 (Passive Capture)**: 主程式隱藏於背景，無需任何人工干預即可自動完備大腦知識庫。
-- **手動/定時夢境 (Auto-Dreaming)**: 可被動等待 `24h` 執行，也可透過 CLI 強制觸發 `openclaw memory-qdrant dream` 來整理老舊記憶。
+- **聯動吸收 (Dream Ingestor)**: 取代了舊版的盲目 autoCapture，改為被動監聽原生 OpenClaw Dreaming 產生的 `MEMORY.md` 與 `short-term-recall.json`，對齊官方運作邏輯。
+- **條件觸發 (Smart Trigger)**: 透過啟發式規則分析意圖，只有在使用者確實尋求回憶資訊時（例如：「上次討論的...」）才會進行語義檢索並注入系統提示，大幅減少 Token 消耗。
 - **主動查詢指令 (Active Commands)**: 
   - 對話窗內支援 `/recall [關鍵字]` 直接提取關聯語義記憶。
 - **AI 專用工具集 (Agent Tools)**: 
