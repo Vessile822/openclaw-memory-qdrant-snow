@@ -1472,37 +1472,7 @@ export default function register(api) {
   // ==========================================================================
   // 生命週期 Hook — 自動回憶 (autoRecall)
   // ==========================================================================
-
-  if (cfg.autoRecall) {
-    api.on('before_agent_start', async (event) => {
-      if (!event.prompt || event.prompt.length < 5) return;
-
-      // 🆕 如果 Prompt 是雜訊（例如 HEARTBEAT），不執行 Recall 以節省 Token 並避免干擾
-      if (isNoise(event.prompt)) return;
-
-      try {
-        const vector = await embeddings.embed(event.prompt);
-        const results = await db.search(vector, 3, SIMILARITY_THRESHOLDS.LOW);
-
-        if (results.length === 0) return;
-
-        api.logger.debug(`memory-qdrant: 注入 ${results.length} 條記憶`);
-
-        return {
-          prependContext: formatRelevantMemoriesContext(
-            results.map((r) => ({
-              category: r.entry.category,
-              role: r.entry.role,
-              text: r.entry.content || r.entry.text,
-              content: r.entry.content || r.entry.text,
-            }))
-          ),
-        };
-      } catch (err) {
-        api.logger.warn(`memory-qdrant: recall 失敗: ${err.message}`);
-      }
-    });
-  }
+  // 已停用 - 使用時由 agent 手動呼叫 /recall 指令
 
   // autoCapture hook 已移除 — 現在靠原生做夢系統寫入 MEMORY.md
 
