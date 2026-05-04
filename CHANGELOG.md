@@ -2,6 +2,56 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.1.2] - 2026-04-27
+
+### Added
+- **Dedicated Extraction Model Configuration**: Introduced `extractionBaseUrl` and `extractionModelId` to allow separating the heavy extraction LLM from the lightweight embedding model.
+- **Precision Date Retrieval**: Added `memory_list_by_date` tool with cross-date buffering to ensure complete daily logs for automated diary summaries.
+- **Content Sanitization**: Enhanced XML tag filtering (e.g., `<final>`, `<think>`) to prevent technical noise from polluting the semantic memory.
+- **Documentation Overhaul**: Fully documented all v3.x configuration parameters in `README.md` and `README_EN.md`.
+
+### Fixed
+- Redundant logic in the batch extraction pipeline to improve processing performance.
+- Inconsistent variable naming between UI configuration and backend runtimes.
+
+## [3.1.0] - 2026-04-23
+
+### Fixed
+- **I-01**: Fixed Smart Extraction fallback bug where LLM success with zero stored memories (due to deduplication) would erroneously fallback to raw mode processing.
+- **I-02**: Added missing `abstract` and `overview` fields to raw mode payload for schema consistency with Dream features.
+- **M-02**: Restricted slash command noise filter regex to explicitly match memory commands (`/recall`, `/remember`, `/forget`, `/search`, `/store`) to prevent false positives on file paths.
+- **C-01**: Unified version numbers across `openclaw.plugin.json`, `index.js`, `SKILL.md`, and `README.md`.
+- **C-02**: Unified `MEMORY_CATEGORIES` definition across `smart-extractor.js`, `index.js`, and documentation to ensure consistent classification (`profile`, `preferences`, `entities`, `events`, `cases`, `patterns`, `other`).
+
+### Changed
+- Default User ID changed to `297387319848075264` to match standard OpenClaw configurations.
+
+## [3.0.0] - 2026-04-18
+
+### Added
+- **Smart Extraction Pipeline**: Optional LLM-based memory distillation (`smartExtraction` flag) to extract structured insights and filter out low-importance content.
+- **Noise Filter**: 7-category bilingual noise rejection (short acknowledgments, boilerplate, meta-questions, system envelopes).
+- **Auto Dream**: Automatic aging and archiving of unused memories (`archived: true`) based on `referenceCount` and `lastReferenced`.
+- **Three-tier Architecture**: Memories now split into `abstract` (L0), `overview` (L1), and `content` (L2).
+- **6 Advanced Categories**: `profile`, `preferences`, `entities`, `events`, `cases`, `patterns`.
+
+### Fixed
+- Huge bug in `autoCapture`: Previously captured the entire conversation history (up to 186 chunks) on every turn. Now properly utilizes `extractLastTurnMessages` to only capture the final turn.
+
+## [2.0.0] - 2026-03-01
+
+### Added
+- Complete rewrite from Python to native OpenClaw Plugin.
+- Native `autoCapture` lifecycle hook integration.
+- Switched to LM Studio (OpenAI format) for local embeddings (zero cloud dependency).
+- Implemented `clean_content` and `chunk_text` natively inside the plugin.
+- Cosine similarity deduplication (threshold 0.95) applied during AutoCapture.
+- TrueRecall 100% payload schema backwards compatibility.
+
+### Removed
+- Python `realtime_qdrant_watcher.py` polling script (no longer needed).
+- `Transformers.js` memory-heavy local embedding module.
+
 ## [1.0.10] - 2026-02-17
 
 ### Fixed

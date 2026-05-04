@@ -1,7 +1,7 @@
 {
   "name": "openclaw-memory-qdrant",
-  "version": "3.1.0",
-  "description": "OpenClaw TrueRecall v3.1 — smart memory with layered categories, dream function, LLM extraction, Qdrant + LM Studio",
+  "version": "3.1.2",
+  "description": "OpenClaw TrueRecall v3.1 — smart memory with layered categories, dream function, LLM extraction, Qdrant + LM Studio (Optimized for v3.1.2)",
   "type": "module",
   "main": "index.js",
   "keywords": [
@@ -15,16 +15,16 @@
     "true-recall",
     "ai"
   ],
-  "author": "zuiho-kai",
+  "author": "Vessile822",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/zuiho-kai/openclaw-memory-qdrant.git"
+    "url": "https://github.com/Vessile822/openclaw-memory-qdrant-snow.git"
   },
   "bugs": {
-    "url": "https://github.com/zuiho-kai/openclaw-memory-qdrant/issues"
+    "url": "https://github.com/Vessile822/openclaw-memory-qdrant-snow/issues"
   },
-  "homepage": "https://github.com/zuiho-kai/openclaw-memory-qdrant#readme",
+  "homepage": "https://github.com/Vessile822/openclaw-memory-qdrant-snow#readme",
   "dependencies": {
     "@qdrant/js-client-rest": "^1.13.0"
   },

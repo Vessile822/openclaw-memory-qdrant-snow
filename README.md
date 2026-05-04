@@ -1,73 +1,143 @@
-# openclaw-memory-qdrant (TrueRecall v2.0)
+# openclaw-memory-qdrant (TrueRecall v3.1)
 
-OpenClaw 官方支援的高效能記憶外掛，已全面升級為 **TrueRecall v2.0 架構**。
-本外掛提供與 OpenClaw 原生整合的語義記憶庫 (Semantic Memory)，透過 Qdrant 向量資料庫與本地 LM Studio 服務提供企業級的長期記憶能力，完全取代舊版耗能的 Python 監聽腳本！
+> **Semantic Memory System with Auto-Dream & Smart Extraction**
+> 
+> A robust, privacy-first semantic memory plugin built for OpenClaw. This plugin serves as the long-term memory engine for AI agents, featuring layered categorization, automated LLM distillation, and a self-maintaining "Auto-Dream" forgetting mechanism.
+>
+> 專為 OpenClaw 打造的在地化、隱私優先語義記憶外掛。本系統作為 AI 代理的長期記憶引擎，具備分層記憶、LLM 自動精煉，以及自我維護的「自動做夢 (Auto-Dream)」遺忘機制。
 
-## 🚀 核心特色
+[繁體中文](README.md) | [English](README_EN.md)
 
-- **純粹本地端、隱私優先**：依賴本地 LM Studio (OpenAI API 格式) 進行向量化，資料不上雲。
-- **TrueRecall 完美繼承**：內建智能文本清理 (移除思維標籤、Markdown、時間戳記) 以及智慧分塊 (Chunking) 技術。
-- **全自動擷取與語義去重**：對話結束後自動抓取重點並進行相似度校驗，確保記憶乾淨不重複。
-- **高效能架構**：捨棄舊版輪詢腳本機制，改以外掛原生攔截儲存，不佔用額外背景資源。
-- **精準跨會話記憶**：支援自動遞增 Turn ID 邏輯，保留連續交談中的完整時序。
-
----
-
-## 💻 系統要求與準備
-
-在啟用本外掛前，請確保：
-
-1. **安裝 LM Studio**：
-   - 啟動 Local Server（預設 `http://127.0.0.1:1234/v1`）。
-   - 載入推薦的 Embedding 模型：`snowflake-arctic-embed-l-v2.0-finetuned-amharic-final` (1024 維度)。
-2. **安裝 Qdrant**：
-   - 可使用 Docker 快速啟動：`docker run -p 6333:6333 qdrant/qdrant`。
-   - 保證伺服器 IP (預設 `http://127.0.0.1:6333`) 是開放的。
+![OpenClaw](https://img.shields.io/badge/OpenClaw_Plugin-2026.3+-blue.svg) ![npm version](https://img.shields.io/badge/npm-v3.1.0-red.svg) ![Vector DB](https://img.shields.io/badge/Vector_DB-Qdrant-purple.svg) ![License](https://img.shields.io/badge/License-MIT-yellow.svg)
 
 ---
 
-## 📦 安裝方式
+## 🎯 解決的痛點 / Pain Points Solved
 
-### 方法一：專案本地連接 (推薦給開發者)
+1. **Information Overload (資訊超載)**: 傳統記憶系統會盲目記錄所有對話，導致雜訊過多、向量檢索命中率低下。本系統引入 **Noise Filter (雜訊過濾)** 與 **Smart Extraction (智慧精煉)**，只儲存有價值的結構化記憶。
+2. **Context Window Limits (上下文限制)**: 對話紀錄日積月累後塞滿 Prompt。本系統參考了 `CortexReach/memory-lancedb-pro` 的理念，採用安全的 **長文切割策略 (Dynamic Chunking)** 完美適應 8192Tokens 的本機模型，並藉由檢索僅注入最高相關性的 K 筆記錄。
+3. **Memory Stagnation (記憶僵化)**: 舊記憶與無用資訊遲遲不被淘汰。獨創的 **Auto-Dream 機制** 會定時在背景透過「時間衰減」與「引用熱度」評分，自動將低分記憶打入冷宮 (Archive)。
+4. **Privacy Concerns (隱私疑慮)**: 所有文本向量化 (Embedding) 完美相容本機端 LM Studio，確保你的個資、Token 與商業決策 100% 留存在本地端，不上雲。
 
-若您已經將此版本庫 clone 下來，您只需進入資料夾並安裝相依套件：
+---
 
+## ⚙️ 核心原則與規格 / Constitution & Specifications
+
+本系統的開發與運行嚴格遵循以下 Spec-Driven Development (SDD) 規格：
+
+### 1. Privacy First (隱私優先)
+* **規格 (Spec-01)**: 所有 Embedding 運算與 Qdrant 儲存皆強制於本地執行 (Local Network)。無對外 API 硬依賴。
+
+### 2. Signal-to-Noise Ratio (高訊噪比)
+* **規格 (Spec-02)**: 強制攔截瑣碎對話。所有對話內容必須通過長度檢測與啟發式過濾，方可進入儲存管線。
+* **規格 (Spec-03)**: (可選) 啟用 LLM Smart Extraction 後，記憶將強制被分類並評估重要性 (Importance)，低重要性者自動捨棄。記憶強制歸類為 6 大精準範圍 (`profile`, `preferences`, `entities`, `events`, `cases`, `patterns`)。
+
+### 3. Self-Maintenance (自我維護)
+* **規格 (Spec-04)**: 自動根據過去 180 天的「參照次數 (Reference Count)」與「時間衰減 (Recency)」為記憶評分，綜合低於 0.3 分且超過 90 天未調用者，自動標示為 `archived`（隱藏），不再干擾日常檢索。
+
+---
+
+## 🏗 系統架構與流程 / Architecture & Flow
+
+為了提供最直觀的理解，本系統的核心架構分為「入口層」與「處理管線」。
+
+```mermaid
+graph TD
+    A[Agent Conversation Ends] -->|Hook: agent_end| B(Interceptor)
+    
+    B --> C{Noise Filter}
+    C -- "Greeting / OK" --> X((Dropped))
+    C -- "Valid Text" --> D[Markdown & Tag Cleaner]
+    
+    D --> E{Smart Extraction Enabled?}
+    
+    E -- YES --> F[LLM Gateway / API]
+    F -- "Distill & Score" --> G[Structured Memory Candidate]
+    F -. "Timeout / Error" .-> H
+    G -- "Importance < Medium" --> X
+    
+    E -- NO --> H[Dynamic Chunker <br> Max 2000 Chars]
+    
+    G --> I[LM Studio Embedder 1024-dim]
+    H --> I
+    
+    I --> J{Qdrant DB Similarity}
+    J -- "> 0.95 (Duplicate)" --> X
+    J -- "< 0.95" --> K[(Qdrant Storage)]
+```
+
+### 處理管線細節 (Pipeline Details)
+
+當一段對話結束，系統將自動啟動以下處理管道：
+
+1. **攔截與預處理 (Intercept & Preprocess)**
+   * 系統只抓取最後一輪最新對話。
+   * 通過雙語雜訊過濾器（剔除 Greeting, OK, Agent Exceptions, Slash commands 等系統雜訊）。
+   * 洗刷 Markdown 格式殘留並去除 `<relevant-memories>` 注入痕跡，保留最真實的對話紀錄。
+
+2. **處理分歧點 (Processing Fork)**
+   * **智慧精煉模式 (Smart Extraction)**：當啟用且 LLM 正常時，透過 Gateway 端點將對話濃縮為結構化記憶，並給予重要性權重。
+   * **原文模式 (Raw Fallback)**：當 LLM 失效 (Graceful Degradation) 或是未啟用精煉時，啟用文字安全切塊 (Chunking)，單塊最高容量提昇至 2000 字元以對齊 8192Tokens 長文模型。
+
+3. **向量化與寫入 (Embed & Store)**
+   * 將處理好的字串發送至 LM Studio 轉換為高維度向量。
+   * 進入 Qdrant Database 進行相似度掃描，若相似度超過 0.95 閾值則觸發去重 (Dedup) 丟棄。
+   * 正式寫入資料庫，完成記憶固化。
+
+---
+
+## 🆚 架構對比表 / Design Comparison
+
+| 特性 (Feature) | 傳統 RAG 記憶系統 | 本外掛 (TrueRecall v3.1) | CortexReach (memory-lancedb-pro) 參考 |
+|---------------|-------------------|-------------------------|--------------------------------------|
+| **儲存方式** | 盲目全文儲存 | 雜訊過濾 + LLM 精煉提存 | 全文切割儲存 + 大語言模型再處理 |
+| **長文處理** | 固定 500 tokens | 動態高達 2000字元 + CJK 安全計算 | 支援 8192Tokens 與句子邊界切斷 |
+| **檢索機制** | 單純 Vector Search | Vector Search 配合自動做夢遺忘機制 | 向量加關鍵字的 Hybrid Search (BM25) |
+| **資料庫引擎**| 雲端 Pinecone / 等 | 完全地端 Qdrant (Docker) | 本地端 LanceDB |
+
+---
+
+## 📦 安裝與設定 / Installation & Setup
+
+### 1. 環境需求 (Prerequisites)
+- **Local LLM**: 開啟 [LM Studio](https://lmstudio.ai/) 的 Local Server (預設 port: 1234)，並載入 Embedding 模型 (推薦: `snowflake-arctic-embed-2.0`，**請將 Context Length 設為 8192**)。
+- **Vector DB**: 啟動 [Qdrant](https://qdrant.tech/) 伺服器：
+  `docker run -p 6333:6333 qdrant/qdrant`
+
+### 2. 安裝外掛 (Install Plugin)
+進入專案資料夾並安裝 Node 相依套件：
 ```bash
-cd c:\Users\Vess\.openclaw\workspace\skills\memory-qdrant
+cd <您的外掛路徑>/memory-qdrant
 npm install
 ```
 
-接著，您需要將路徑註冊到 `openclaw.json` (詳見後續設定)。
+### 3. 配置參數 (Configuration)
+在你的 `~/.openclaw/openclaw.json` (或等效的主設定檔) 中，配置記憶體模組的區塊：
 
----
-
-## ⚙️ OpenClaw 設定與啟動
-
-請在您的 OpenClaw 全域設定檔（通常位在 `~/.openclaw/openclaw.json`），將此記憶外掛掛上。
-
-請參考以下範例：
-
-```json5
+```json
 {
   "plugins": {
-    "allow": [
-      "memory-qdrant" // 將您的外掛名稱加到允許列表中
-    ],
+    "allow": ["memory-qdrant"],
     "slots": {
-      "memory": "memory-qdrant" // 讓系統使用 qdrant 做為主要的預設記憶模組
+      "memory": "memory-qdrant"
     },
     "entries": {
       "memory-qdrant": {
         "enabled": true,
         "config": {
-          "qdrantUrl": "http://192.168.0.163:6333", // 您的 Qdrant 位址
-          "collectionName": "memories_tr", // 1024 維度的專屬集合
-          "embeddingBaseUrl": "http://127.0.0.1:1234/v1", // LM Studio 位址
-          "embeddingModel": "text-embedding-desu-snowflake-arctic-embed-l-v2.0-finetuned-amharic-final",
-          "defaultUserId": "Vess", 
-          "defaultAgentId": "main",
-          "autoCapture": true, // 自動重點記憶
-          "autoRecall": true   // 自動背景提取
+          "qdrantUrl": "http://127.0.0.1:6333",
+          "collectionName": "memories_tr",
+          "embeddingBaseUrl": "http://127.0.0.1:1234/v1",
+          "embeddingModelId": "text-embedding-desu-snowflake-arctic-embed-l-v2.0-finetuned-amharic-final",
+          "embeddingModelDimension": 1024,
+          
+          "autoCapture": true,
+          "autoDreamInterval": "24h",
+          
+          "smartExtraction": true,
+          "extractionBaseUrl": "http://localhost:18789/v1",
+          "extractionModelId": "Doubao-Seed-2.0-Code",
+          "maxExtractionChars": 8000
         }
       }
     }
@@ -75,51 +145,40 @@ npm install
 }
 ```
 
-設定完成後，重啟 OpenClaw 環境即可生效：
-
+最後，重啟 Gateway 讓外掛載入：
 ```bash
 openclaw gateway restart
-# 或是直接啟動您的 dashboard
 ```
 
----
+#### 參數詳細說明 (Detailed Parameters)
 
-## 🛠 技術規格與實作細節
-
-### Payload Schema 一致性
-此 v2 開發版本 100% 向後相容 TrueRecall Python 的儲存格式。寫入 Qdrant 的每一筆 Point 結構如下，確保您舊有外掛的記憶無縫銜接：
-
-- `user_id`: 使用者識別碼
-- `agent_id`: Agent 識別碼
-- `role`: user 或 assistant
-- `content`: 清潔後的分塊內容
-- `full_content_length`: 原文長度
-- `turn`: 跨會話計數器
-- `timestamp` / `date`: 寫入時間
-- `source`: `"true-recall-base"`
-- `curated`: `false`
-- `chunk_index` / `total_chunks`: 智能分塊資訊
-
-### API 工具介面 ( MCP相容 )
-
-本外掛向 OpenClaw 註冊下列能力 (Agent 會自動觸發)：
-1. **`memory_store`**: 寫入特定新記憶
-2. **`memory_search`**: 提供高精準語義查詢
-3. **`memory_forget`**: 透過精準比對刪除
+| 參數 (Parameter) | 說明 (Description) | 預設值 (Default) |
+| :--- | :--- | :--- |
+| `qdrantUrl` | Qdrant 資料庫的 API 位址 | `http://127.0.0.1:6333` |
+| `collectionName` | 存儲記憶的集合名稱 | `memories_tr` |
+| `embeddingBaseUrl` | Embedding 模型 (LM Studio) 的 API 位址 | `http://127.0.0.1:1234/v1` |
+| `embeddingModelId` | 使用的向量模型名稱 | `(Snowflake 2.0)` |
+| `embeddingModelDimension` | 向量維度 (Snowflake 為 1024) | `1024` |
+| `autoCapture` | 是否在對話結束後自動捕捉新記憶 | `true` |
+| `autoDreamInterval` | 自動執行「夢境整理」(去重/評分/遺忘) 的間隔 | `24h` |
+| `smartExtraction` | 是否啟用 LLM 智慧精煉 (將對話濃縮為結構化事實) | `false` |
+| `extractionBaseUrl` | **[NEW]** 精煉專用的 LLM API 位址 (可與 Embedding 分開) | (同 Embedding) |
+| `extractionModelId` | **[NEW]** 精煉專用的 LLM 模型名稱 (建議用強大的模型) | (同 Embedding) |
+| `maxExtractionChars` | **[NEW]** 每次精煉時送入 LLM 的最大字元數 (限制 Context) | `8000` |
 
 ---
 
-## 💡 常見問題
+## 🛠 互動與模組 / Capabilities
 
-**Q：為什麼啟動外掛卻抱錯「fetch failed」？**
-A：通常是因為您的 LM Studio Local Server 尚未開啟。請先去 LM Studio 啟動 Server 再啟動 OpenClaw。
+- **純背景被動捕捉 (Passive Capture)**: 主程式隱藏於背景，無需任何人工干預即可自動完備大腦知識庫。
+- **手動/定時夢境 (Auto-Dreaming)**: 可被動等待 `24h` 執行，也可透過 CLI 強制觸發 `openclaw memory-qdrant dream` 來整理老舊記憶。
+- **主動查詢指令 (Active Commands)**: 
+  - 對話窗內支援 `/recall [關鍵字]` 直接提取關聯語義記憶。
+- **AI 專用工具集 (Agent Tools)**: 
+  - `memory_store`: 結構化儲存記憶。
+  - `memory_search`: 語義搜尋相關背景。
+  - `memory_list_by_date`: **[NEW]** 日期精準檢索。支援跨日期緩衝抓取，自動過濾雜訊，最適合「每日日記總結」任務。
+  - `memory_forget_by_id`: 精準刪除特定條目。
 
-**Q：寫入時遇到維度不匹配的問題（例如 expected length 384, got 1024）？**
-A：這是舊版 Qdrant Collection (`openclaw_memories` 預設是 384 維度) 衝突所致。升級後請改用全新的 Collection (如 `memories_tr`)，以容納 1024 維度的向量。
-
-**Q：需要開著 Python 背景監聽腳本 (`realtime_qdrant_watcher.py`) 嗎？**
-A：**完全不用！** 升級 v2.0 之後這個外掛會原生自動處理攔截、清理、寫入。請徹底停用原本的 Python 輪詢腳本，以免記憶被重複寫入 2 遍！
-
-## 授權條款
-
-MIT
+---
+`License: MIT`
