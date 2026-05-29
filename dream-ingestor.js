@@ -24,6 +24,7 @@ export class DreamIngestor {
 
     this.debounceMs = this.options.debounceMs || 15000;
     this.ingestTimeout = null;
+    this._running = false; // 防止重複執行
     this.checkpoints = this.loadCheckpoints();
   }
 
@@ -80,11 +81,18 @@ export class DreamIngestor {
   debounceIngest() {
     if (this.ingestTimeout) clearTimeout(this.ingestTimeout);
     this.ingestTimeout = setTimeout(() => {
-      this.ingestAll().catch(e => this.api.logger.error(`dream-ingestor: 吸收失敗: ${e.message}`));
+      this.ingestAll().catch(e => { this._running = false; this.api.logger.error(`dream-ingestor: 吸收失敗: ${e.message}`); });
     }, this.debounceMs);
   }
 
   async ingestAll() {
+    // 防止重複執行
+    if (this._running) {
+      this.api.logger.debug('dream-ingestor: 已有吸收任務執行中，跳過');
+      return;
+    }
+    this._running = true;
+
     let hasChanges = false;
     let combinedText = '';
 
@@ -158,12 +166,20 @@ export class DreamIngestor {
       return results.filter(r => r.entry.status !== 'staging').map(r => r.entry);
     };
 
-    const operations = await processBatch(combinedText, searchCuratedFn, {
-      llmBaseUrl: this.options.llmBaseUrl,
-      llmModel: this.options.llmModel,
-      maxChars: 8000,
-      log: (msg) => this.api.logger.debug(`dream-ingestor: ${msg}`)
-    });
+    let operations;
+    try {
+      operations = await processBatch(combinedText, searchCuratedFn, {
+        llmBaseUrl: this.options.llmBaseUrl,
+        llmModel: this.options.llmModel,
+        maxChars: 8000,
+        log: (msg) => this.api.logger.info(`dream-ingestor: ${msg}`)
+      });
+    } catch (err) {
+      this.api.logger.warn(`dream-ingestor: processBatch 失敗: ${err.message}`);
+      this.saveCheckpoints();
+      this._running = false;
+      return;
+    }
 
     let created = 0;
     let updated = 0;
@@ -239,6 +255,7 @@ export class DreamIngestor {
     }
 
     this.saveCheckpoints();
+    this._running = false;
     this.api.logger.info(`🌟 [Dreaming] 記憶吸收完成！建立 ${created} 筆，更新 ${updated} 筆。`);
   }
 }

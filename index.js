@@ -371,16 +371,22 @@ class MemoryDB {
 
     await this.ensureCollection();
 
-    // 產生確定性 ID（與 Python 腳本一致的 hash 邏輯）
+    // 產生確定性 UUID ID（基於 SHA-256 hash）
+    // Qdrant 的 string ID 必須是合法 UUID 格式，不能是數字字串
     const turn = entry.payload.turn || 0;
     const chunkIndex = entry.payload.chunk_index || 0;
     const baseTime = new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 14);
     const hashInput = `${entry.payload.user_id}:turn:${turn}:chunk${chunkIndex}:${baseTime}`;
     const hashBytes = createHash('sha256').update(hashInput).digest();
-    // 取前 8 bytes 轉為正整數（與 Python int.from_bytes 一致）
-    // 修復 BigInt 序列化問題：將其轉為字串 ID 或 Number
-    const pointIdRaw = hashBytes.readBigUInt64BE(0) % BigInt(2 ** 63);
-    const pointId = pointIdRaw.toString(); // 使用字串 ID 最保險
+    // 取前 16 bytes 組成 UUID v4 格式（設定 version=4, variant=10xx）
+    const hex = hashBytes.subarray(0, 16).toString('hex');
+    const pointId = [
+      hex.slice(0, 8),
+      hex.slice(8, 12),
+      '4' + hex.slice(13, 16),           // version 4
+      ((parseInt(hex[16], 16) & 0x3) | 0x8).toString(16) + hex.slice(17, 20), // variant 10xx
+      hex.slice(20, 32),
+    ].join('-');
 
     // Initialize scoring metadata
     if (entry.payload.referenceCount === undefined) entry.payload.referenceCount = 0;
@@ -977,6 +983,8 @@ export default function register(api) {
 
         let storedCount = 0;
         let skippedDuplicates = 0;
+        let failedChunks = 0;
+        let lastError = '';
         let skippedShortChunks = chunks.filter(c => c.text.length < 50).length;
 
         // 4. 逐 chunk 嵌入 + 寫入
@@ -1023,6 +1031,8 @@ export default function register(api) {
             await db.storeTrueRecall({ vector, payload });
             storedCount++;
           } catch (err) {
+            failedChunks++;
+            lastError = err.message;
             api.logger.error(
               `memory-qdrant: chunk ${chunk.chunk_index} 寫入失敗: ${err.message}`
             );
@@ -1031,7 +1041,9 @@ export default function register(api) {
 
         let msg;
         if (storedCount > 0) {
-          msg = `已儲存 ${storedCount} 個 chunk (turn ${currentTurn})${skippedDuplicates > 0 ? `，跳過 ${skippedDuplicates} 個重複` : ''}${skippedShortChunks > 0 ? `，跳過 ${skippedShortChunks} 個太短（<50字）` : ''}`;
+          msg = `已儲存 ${storedCount} 個 chunk (turn ${currentTurn})${skippedDuplicates > 0 ? `，跳過 ${skippedDuplicates} 個重複` : ''}${skippedShortChunks > 0 ? `，跳過 ${skippedShortChunks} 個太短（<50字）` : ''}${failedChunks > 0 ? `，${failedChunks} 個失敗` : ''}`;
+        } else if (failedChunks > 0) {
+          msg = `全部 ${failedChunks} 個 chunk 寫入失敗: ${lastError}`;
         } else if (skippedShortChunks > 0) {
           msg = `全部 ${skippedShortChunks} 個 chunk 太短（<50字）未寫入`;
         } else {
@@ -1048,6 +1060,8 @@ export default function register(api) {
                 storedChunks: storedCount,
                 skippedDuplicates,
                 skippedShortChunks,
+                failedChunks,
+                lastError: failedChunks > 0 ? lastError : undefined,
                 turn: currentTurn,
                 totalChunks: chunks.length,
               }, (k, v) => typeof v === 'bigint' ? v.toString() : v),

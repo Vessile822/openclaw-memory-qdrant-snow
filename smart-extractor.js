@@ -267,12 +267,55 @@ class LLMClient {
    */
   constructor(baseUrl, model, timeoutMs = DEFAULT_TIMEOUT_MS) {
     this.baseUrl = baseUrl;
-    this.model = model;
+    
+    // 自動剝離前綴，例如 'lmstudio/qwen...' -> 'qwen...'
+    // 因為若打向 LM Studio，帶有 'lmstudio/' 前綴會導致 400 Bad Request
+    let cleanModel = model;
+    if (cleanModel && cleanModel.includes('/')) {
+      cleanModel = cleanModel.split('/').slice(1).join('/');
+    }
+    this.model = cleanModel;
+    
     this.timeoutMs = timeoutMs;
+    this._supportsJsonFormat = null; // null = 未知, true/false = 已探測
+  }
+
+  /**
+   * 從 LLM 回應文字中提取 JSON 物件。
+   * 支援：純 JSON、```json 包裹、<think> 標籤夾雜、多餘文字等。
+   * @param {string} rawContent LLM 回應原文
+   * @returns {object|null}
+   */
+  _extractJson(rawContent) {
+    if (!rawContent) return null;
+
+    let text = rawContent.trim();
+
+    // 1. 移除 Qwen thinking 標籤
+    text = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+    text = text.replace(/<\/think>/gi, '').trim();
+
+    // 2. 嘗試 ```json ... ``` 包裹
+    const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    if (codeBlockMatch) {
+      try { return JSON.parse(codeBlockMatch[1].trim()); } catch (_) { /* fallthrough */ }
+    }
+
+    // 3. 直接嘗試解析整段
+    try { return JSON.parse(text); } catch (_) { /* fallthrough */ }
+
+    // 4. 尋找第一個 { ... } 或 [ ... ] 結構
+    const braceMatch = text.match(/(\{[\s\S]*\})/); 
+    if (braceMatch) {
+      try { return JSON.parse(braceMatch[1]); } catch (_) { /* fallthrough */ }
+    }
+
+    return null;
   }
 
   /**
    * 呼叫 Chat Completion API 並回傳 JSON 物件。
+   * 自動偵測模型是否支援 response_format: json_object，不支援時自動降級。
    * @param {string} systemPrompt 系統提示
    * @param {string} userPrompt 使用者提示
    * @returns {Promise<object|null>} 解析後的 JSON 物件，失敗回傳 null
@@ -284,38 +327,53 @@ class LLMClient {
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
 
     try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: this.model,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt },
-          ],
-          temperature: 0.1,
-          response_format: { type: 'json_object' },
-        }),
-        signal: controller.signal,
-      });
+      const baseBody = {
+        model: this.model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        temperature: 0.1,
+      };
+
+      // 根據過去探測結果決定是否加 response_format
+      let useJsonFormat = this._supportsJsonFormat !== false;
+
+      const makeRequest = async (withJsonFormat) => {
+        const body = { ...baseBody };
+        if (withJsonFormat) {
+          body.response_format = { type: 'json_object' };
+        }
+        return fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+      };
+
+      let response = await makeRequest(useJsonFormat);
+
+      // 如果 400 且之前沒探測過，嘗試不帶 response_format 重試
+      if (!response.ok && response.status === 400 && this._supportsJsonFormat === null) {
+        this._supportsJsonFormat = false;
+        response = await makeRequest(false);
+      }
 
       if (!response.ok) {
         const errText = await response.text().catch(() => '');
         throw new Error(`LLM API 失敗 (${response.status}): ${errText}`);
       }
 
+      // 標記模型支援性
+      if (this._supportsJsonFormat === null) {
+        this._supportsJsonFormat = useJsonFormat;
+      }
+
       const data = await response.json();
       const content = data.choices?.[0]?.message?.content;
 
-      if (!content) return null;
-
-      let jsonStr = content.trim();
-      const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-      if (jsonMatch) {
-        jsonStr = jsonMatch[1];
-      }
-
-      return JSON.parse(jsonStr);
+      return this._extractJson(content);
     } catch (err) {
       if (err.name === 'AbortError') {
         throw new Error(`LLM 請求超時 (${this.timeoutMs}ms)`);
