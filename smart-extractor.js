@@ -31,7 +31,7 @@ const IMPORTANCE_LEVELS = {
 /** 預設只保留 medium 以上的記憶 */
 const DEFAULT_MIN_IMPORTANCE = 'medium';
 
-const DEFAULT_TIMEOUT_MS = 30000;
+const DEFAULT_TIMEOUT_MS = 300000; // 5 minutes (for local LLMs)
 
 // ============================================================================
 // Extraction Prompt

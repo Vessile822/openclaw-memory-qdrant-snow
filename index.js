@@ -539,13 +539,40 @@ class MemoryDB {
         ]
       } : undefined;
 
-      const results = await this.client.search(this.collectionName, {
-        vector,
+      const queryResults = await this.client.query(this.collectionName, {
+        prefetch: [
+          {
+            query: {
+              nearest: vector,
+              mmr: {
+                diversity: 0.25,
+                candidates_limit: limit * 4
+              }
+            },
+            filter,
+            limit: limit * 2,
+            score_threshold: minScore
+          }
+        ],
+        query: {
+          formula: {
+            sum: [
+              "$score",
+              {
+                mult: [
+                  0.0001,
+                  "turn"
+                ]
+              }
+            ]
+          }
+        },
+        defaults: { turn: 0 },
         limit,
-        score_threshold: minScore,
         with_payload: true,
-        filter,
       });
+
+      const results = queryResults.points || [];
 
       if (results.length > 0) {
         // Fire and forget updating references
